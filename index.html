@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CCF Assist by Moe</title>
+    
+    <!-- Spezifische iOS PWA Meta-Tags -->
+    <meta name="theme-color" content="#ffffff">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="CCF Assist">
+
+    <!-- Verweise auf die externen PWA-Dateien -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon.jpg">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel für JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Registrierung des echten Service Workers für iOS -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => console.log('Service Worker erfolgreich registriert.'))
+                    .catch(err => console.warn('Service Worker Registrierung fehlgeschlagen:', err));
+            });
+        }
+    </script>
+</head>
+<body class="bg-white overscroll-none select-none">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- KONSTANTEN ---
+        const BPM = 110;
+        const MS_PER_COMPRESSION = 60000 / BPM;
+
+        const CPR_MODES = {
+            '15:2': { compressions: 15, ventTime: 2000 },
+            '30:2': { compressions: 30, ventTime: 2000 },
+            'continuous': { compressions: 0, ventTime: 0 }
+        };
+
+        const formatTime = (ms) => {
+            if (ms < 0) return "00:00";
+            const totalSeconds = Math.floor(ms / 1000);
+            const m = Math.floor(totalSeconds / 60);
+            const s = totalSeconds % 60;
+            return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        };
+
+        const formatClockTime = (timestamp) => {
+            if (!timestamp) return "--:--:--";
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString('de-DE');
+        };
+
+        const App = () => {
+            const [appLoadTime, setAppLoadTime] = useState(null); 
+            const [hasStarted, setHasStarted] = useState(false);  
+            const [isFinished, setIsFinished] = useState(false);  
+            
+            const [now, setNow] = useState(null);
+            const [startTime, setStartTime] = useState(null);
+            const [cprMode, setCprMode] = useState('30:2');
+            const [sessions, setSessions] = useState([]);
+            const [currentSession, setCurrentSession] = useState(null);
+            const [isSoundOn, setIsSoundOn] = useState(false);
+            
+            const [ineffectiveVents, setIneffectiveVents] = useState(0); 
+            const [effectiveVents, setEffectiveVents] = useState(0);     
+            
+            const [protocolData, setProtocolData] = useState(null);
+
+            const audioCtxRef = useRef(null);
+            const lastPlayedIdRef = useRef(null);
+            const currentSessionRef = useRef(currentSession);
+            const isSoundOnRef = useRef(isSoundOn);
+            
+            useEffect(() => {
+                const loadTime = Date.now();
+                setAppLoadTime(loadTime);
+                setNow(loadTime);
+            }, []);
+
+            useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
+            useEffect(() => { isSoundOnRef.current = isSoundOn; }, [isSoundOn]);
+
+            // --- AUDIO GENERATOR (iOS OPTIMIERT) ---
+            const unlockSafariAudio = () => {
+                if (!audioCtxRef.current) {
+                    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtxRef.current.state === 'suspended') {
+                    audioCtxRef.current.resume();
+                }
+                try {
+                    const osc = audioCtxRef.current.createOscillator();
+                    const gain = audioCtxRef.current.createGain();
+                    gain.gain.value = 0;
+                    osc.connect(gain);
+                    gain.connect(audioCtxRef.current.destination);
+                    osc.start(0);
+                    osc.stop(audioCtxRef.current.currentTime + 0.01);
+                } catch(e) {}
+            };
+
+            const playTone = (type) => {
+                if (!audioCtxRef.current) return;
+                const ctx = audioCtxRef.current;
+                
+                if (ctx.state === 'suspended') {
+                    ctx.resume().catch(() => {});
+                }
+
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+
+                const t = ctx.currentTime;
+                if (type === 'compression') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(220, t);
+                    gain.gain.setValueAtTime(0, t);
+                    gain.gain.linearRampToValueAtTime(0.6, t + 0.03); 
+                    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.2); 
+                    osc.start(t);
+                    osc.stop(t + 0.2);
+                } else if (type === 'ventilation') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(180, t);
+                    gain.gain.setValueAtTime(0, t);
+                    gain.gain.linearRampToValueAtTime(0.5, t + 0.3); 
+                    gain.gain.linearRampToValueAtTime(0.01, t + 0.8);   
+                    osc.start(t);
+                    osc.stop(t + 0.8);
+                }
+            };
+
+            // --- TAKTGEBER ---
+            useEffect(() => {
+                let interval;
+                if (!isFinished) {
+                    interval = setInterval(() => {
+                        const currentTime = Date.now();
+                        setNow(currentTime);
+
+                        if (hasStarted && isSoundOnRef.current && currentSessionRef.current) {
+                            const session = currentSessionRef.current;
+                            const sessionDuration = currentTime - session.start;
+                            let currentBeatId = null;
+
+                            if (session.mode === 'continuous') {
+                                const compIndex = Math.floor(sessionDuration / MS_PER_COMPRESSION);
+                                currentBeatId = `cont-c-${compIndex}`;
+                                if (currentBeatId !== lastPlayedIdRef.current) {
+                                    playTone('compression');
+                                    lastPlayedIdRef.current = currentBeatId;
+                                }
+                            } else {
+                                const config = CPR_MODES[session.mode];
+                                const compTime = config.compressions * MS_PER_COMPRESSION;
+                                const cycleTime = compTime + config.ventTime;
+
+                                const cycleIndex = Math.floor(sessionDuration / cycleTime);
+                                const remainder = sessionDuration % cycleTime;
+
+                                if (remainder < compTime) {
+                                    const compIndex = Math.floor(remainder / MS_PER_COMPRESSION);
+                                    currentBeatId = `${cycleIndex}-c-${compIndex}`;
+                                    if (currentBeatId !== lastPlayedIdRef.current) {
+                                        playTone('compression');
+                                        lastPlayedIdRef.current = currentBeatId;
+                                    }
+                                } else {
+                                    const ventIndex = Math.floor((remainder - compTime) / 1000);
+                                    currentBeatId = `${cycleIndex}-v-${ventIndex}`;
+                                    if (currentBeatId !== lastPlayedIdRef.current) {
+                                        playTone('ventilation');
+                                        lastPlayedIdRef.current = currentBeatId;
+                                    }
+                                }
+                            }
+                        }
+                    }, 30);
+                }
+                return () => clearInterval(interval);
+            }, [hasStarted, isFinished]);
+
+            // --- AKTIONEN ---
+            const handleStart = () => {
+                unlockSafariAudio();
+                const currentTime = Date.now();
+                setHasStarted(true);
+                setStartTime(currentTime);
+                setCurrentSession({ start: currentTime, mode: cprMode });
+                lastPlayedIdRef.current = null;
+                setNow(currentTime);
+            };
+
+            const togglePause = () => {
+                unlockSafariAudio();
+                const currentTime = Date.now();
+                if (currentSession) {
+                    setSessions(prev => [...prev, { ...currentSession, end: currentTime }]);
+                    setCurrentSession(null);
+                    lastPlayedIdRef.current = null; 
+                } else {
+                    setCurrentSession({ start: currentTime, mode: cprMode });
+                }
+            };
+
+            const handleModeSwitch = (newMode) => {
+                setCprMode(newMode);
+                if (currentSession) {
+                    const currentTime = Date.now();
+                    setSessions(prev => [...prev, { ...currentSession, end: currentTime }]);
+                    setCurrentSession({ start: currentTime, mode: newMode });
+                    lastPlayedIdRef.current = null; 
+                }
+            };
+
+            const toggleSound = () => {
+                unlockSafariAudio();
+                setIsSoundOn(!isSoundOn);
+            };
+
+            const handleIneffectiveVent = (e) => {
+                e.stopPropagation(); 
+                setIneffectiveVents(prev => prev + 1);
+            };
+
+            const handleEffectiveVent = (e) => {
+                e.stopPropagation(); 
+                setEffectiveVents(prev => prev + 1);
+            };
+
+            // --- BERECHNUNGEN ---
+            const calculateSessionActiveTime = (session, endTime) => {
+                const duration = endTime - session.start;
+                if (session.mode === 'continuous') return duration;
+                
+                const config = CPR_MODES[session.mode];
+                const compTime = config.compressions * MS_PER_COMPRESSION;
+                const cycleTime = compTime + config.ventTime;
+
+                const fullCycles = Math.floor(duration / cycleTime);
+                const remainder = duration % cycleTime;
+                return (fullCycles * compTime) + Math.min(remainder, compTime);
+            };
+
+            let currentCcf = 100;
+            let elapsedCprMs = 0;
+            let totalActiveMs = 0;
+            let isAutoVentilationPause = false;
+            
+            const scenarioElapsedMs = now && appLoadTime ? Math.max(0, now - appLoadTime) : 0;
+
+            if (hasStarted && now && startTime) {
+                elapsedCprMs = Math.max(0, now - startTime);
+                
+                sessions.forEach(s => totalActiveMs += calculateSessionActiveTime(s, s.end));
+                
+                if (currentSession) {
+                    totalActiveMs += calculateSessionActiveTime(currentSession, now);
+                    if (currentSession.mode !== 'continuous') {
+                        const config = CPR_MODES[currentSession.mode];
+                        const compTime = config.compressions * MS_PER_COMPRESSION;
+                        const cycleTime = compTime + config.ventTime;
+                        if ((now - currentSession.start) % cycleTime >= compTime) {
+                            isAutoVentilationPause = true;
+                        }
+                    }
+                }
+                
+                if (elapsedCprMs > 0) currentCcf = Math.round((totalActiveMs / elapsedCprMs) * 100);
+            }
+
+            const endScenario = () => {
+                const endTime = Date.now();
+                let finalSessions = [...sessions];
+                let finalActiveMs = totalActiveMs;
+                let finalElapsedCprMs = elapsedCprMs;
+                
+                if (currentSession) {
+                    finalSessions.push({ ...currentSession, end: endTime });
+                    finalActiveMs += calculateSessionActiveTime(currentSession, endTime);
+                }
+                
+                const ccfFinal = finalElapsedCprMs > 0 ? Math.round((finalActiveMs / finalElapsedCprMs) * 100) : 0;
+                const handsOffMs = finalElapsedCprMs - finalActiveMs;
+                const timeToFirstCompMs = startTime ? (startTime - appLoadTime) : 0;
+                const finalScenarioMs = endTime - appLoadTime;
+
+                setProtocolData({
+                    startDate: new Date(appLoadTime).toLocaleDateString('de-DE'),
+                    appLoadTimeString: formatClockTime(appLoadTime),
+                    startTimeString: formatClockTime(startTime),
+                    endTimeString: formatClockTime(endTime),
+                    scenarioTotalElapsed: formatTime(finalScenarioMs),
+                    cprTotalElapsed: formatTime(finalElapsedCprMs),
+                    ccf: ccfFinal,
+                    timeToFirstCompression: formatTime(timeToFirstCompMs),
+                    handsOnTime: formatTime(finalActiveMs),
+                    handsOffTime: formatTime(handsOffMs),
+                    ineffectiveVents: ineffectiveVents,
+                    effectiveVents: effectiveVents,
+                    totalVents: ineffectiveVents + effectiveVents
+                });
+
+                setCurrentSession(null);
+                setIsSoundOn(false); 
+                setIsFinished(true); 
+            };
+
+            const resetApp = () => {
+                setHasStarted(false);
+                setIsFinished(false);
+                setStartTime(null);
+                setSessions([]);
+                setCurrentSession(null);
+                setNow(Date.now());
+                setCprMode('30:2');
+                setIsSoundOn(false);
+                setProtocolData(null);
+                setAppLoadTime(Date.now()); 
+                setIneffectiveVents(0);
+                setEffectiveVents(0);
+                lastPlayedIdRef.current = null;
+            };
+
+            const handlePrint = () => {
+                window.print();
+            };
+
+            const isActive = currentSession !== null;
+
+            // --- RENDER PROTOKOLL SCREEN ---
+            if (isFinished && protocolData) {
+                return (
+                    <div className="min-h-screen bg-gray-50 text-gray-800 flex flex-col items-center py-12 px-6 font-sans w-full">
+                        <style>
+                            {`
+                            @media print {
+                                body { background: white !important; }
+                                .no-print { display: none !important; }
+                                .print-container { box-shadow: none !important; max-width: 100% !important; border: none !important; padding: 0 !important; margin: 0 !important; }
+                            }
+                            `}
+                        </style>
+
+                        <div className="print-container bg-white w-full max-w-2xl rounded-2xl shadow-sm border border-gray-100 p-8 md:p-12">
+                            <div className="border-b border-gray-200 pb-6 mb-8 flex justify-between items-end">
+                                <div>
+                                    <div className="flex items-center gap-2 mb-4 text-red-500">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+                                            <path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/>
+                                        </svg>
+                                        <span className="text-sm font-medium tracking-wide text-gray-800">CCF Assist</span>
+                                    </div>
+                                    <h1 className="text-3xl font-light text-gray-900 tracking-wide uppercase mb-2">Reanimationsprotokoll</h1>
+                                    <p className="text-gray-400 text-sm tracking-widest uppercase">Einsatzbericht • {protocolData.startDate}</p>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-y-8 gap-x-8 mb-8">
+                                <div>
+                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Einsatzbeginn</p>
+                                    <p className="text-xl font-light tabular-nums">{protocolData.appLoadTimeString}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">1. Kompression</p>
+                                    <p className="text-xl font-light tabular-nums">{protocolData.startTimeString}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Einsatzende</p>
+                                    <p className="text-xl font-light tabular-nums">{protocolData.endTimeString}</p>
+                                </div>
+                                
+                                <div>
+                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Gesamtzeit Einsatz</p>
+                                    <p className="text-xl font-medium text-gray-800 tabular-nums">{protocolData.scenarioTotalElapsed} <span className="text-sm font-light text-gray-400">min</span></p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Gesamtzeit CPR</p>
+                                    <p className="text-xl font-medium text-gray-800 tabular-nums">{protocolData.cprTotalElapsed} <span className="text-sm font-light text-gray-400">min</span></p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Zeit bis 1. Kompr.</p>
+                                    <p className="text-xl font-light tabular-nums text-red-500">{protocolData.timeToFirstCompression} <span className="text-sm text-red-300">min</span></p>
+                                </div>
+                            </div>
+
+                            <div className="mt-4 pt-8 border-t border-gray-100">
+                                <h2 className="text-sm font-medium text-gray-900 tracking-widest uppercase mb-6">Qualitätsindikatoren (CPR)</h2>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div className="bg-gray-50 rounded-xl p-5 md:col-span-1">
+                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">Chest Compression Fraction</p>
+                                        <p className={`text-5xl font-light tabular-nums ${protocolData.ccf >= 80 ? 'text-green-600' : 'text-amber-500'}`}>
+                                            {protocolData.ccf}<span className="text-2xl">%</span>
+                                        </p>
+                                        <p className="text-[10px] text-gray-400 mt-2 uppercase tracking-wide">Ziel: {">"} 80%</p>
+                                    </div>
+                                    <div className="bg-gray-50 rounded-xl p-5">
+                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">Hands-On (Aktiv)</p>
+                                        <p className="text-3xl font-light tabular-nums text-gray-800 mt-2">
+                                            {protocolData.handsOnTime} <span className="text-lg text-gray-400">min</span>
+                                        </p>
+                                        <p className="text-[10px] text-gray-400 mt-3 uppercase tracking-wide">Reine Kompressionszeit</p>
+                                    </div>
+                                    <div className="bg-gray-50 rounded-xl p-5">
+                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">Hands-Off (Pausen)</p>
+                                        <p className="text-3xl font-light tabular-nums text-gray-800 mt-2">
+                                            {protocolData.handsOffTime} <span className="text-lg text-gray-400">min</span>
+                                        </p>
+                                        <p className="text-[10px] text-gray-400 mt-3 uppercase tracking-wide">Summe aller Unterbrechungen</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="mt-8 pt-8 border-t border-gray-100">
+                                <h2 className="text-sm font-medium text-gray-900 tracking-widest uppercase mb-6">Beatmung (Instruktor-Log)</h2>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div className="bg-gray-50 border border-gray-100 rounded-xl p-5">
+                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">Versuche Gesamt</p>
+                                        <p className="text-3xl font-light tabular-nums text-gray-800 mt-2">{protocolData.totalVents}</p>
+                                    </div>
+                                    <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-5">
+                                        <p className="text-[10px] text-blue-600 tracking-widest uppercase mb-2">Davon Effektiv</p>
+                                        <p className="text-3xl font-light tabular-nums text-blue-700 mt-2">{protocolData.effectiveVents}</p>
+                                    </div>
+                                    <div className="bg-orange-50/50 border border-orange-100 rounded-xl p-5">
+                                        <p className="text-[10px] text-orange-600 tracking-widest uppercase mb-2">Davon Ineffektiv</p>
+                                        <p className="text-3xl font-light tabular-nums text-orange-700 mt-2">{protocolData.ineffectiveVents}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="hidden print:block mt-24 pt-8 border-t border-gray-200 text-sm text-gray-400">
+                                Generiert durch CCF Assist by Moe • {new Date().toLocaleString('de-DE')}
+                            </div>
+                        </div>
+
+                        <div className="no-print mt-10 flex flex-col sm:flex-row gap-4 w-full max-w-2xl">
+                            <button onClick={handlePrint} className="flex-1 bg-gray-900 text-white py-4 rounded-xl font-medium tracking-wide flex justify-center items-center gap-2 hover:bg-gray-800 transition-colors">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                                Als PDF exportieren
+                            </button>
+                            <button onClick={resetApp} className="flex-1 bg-white border border-gray-200 text-gray-600 py-4 rounded-xl font-medium tracking-wide hover:bg-gray-50 transition-colors">
+                                Neues Szenario starten
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- RENDER MAIN APP ---
+            return (
+                <div className="min-h-screen bg-white text-gray-800 flex flex-col font-sans overflow-hidden w-full">
+                    <style>
+                        {`
+                        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap');
+                        body { font-family: 'Inter', sans-serif; }
+                        
+                        @keyframes pulse-110-bpm {
+                            0% { transform: scale(0.995); box-shadow: 0 0 0 0 rgba(220, 252, 231, 0.5); background-color: #dcfce7; }
+                            50% { transform: scale(1.015); box-shadow: 0 0 0 35px rgba(220, 252, 231, 0); background-color: #bbf7d0; }
+                            100% { transform: scale(0.995); box-shadow: 0 0 0 0 rgba(220, 252, 231, 0); background-color: #dcfce7; }
+                        }
+                        .animate-cpr-beat { animation: pulse-110-bpm 545ms infinite ease-in-out; }
+
+                        @keyframes breathe-blue {
+                            0% { transform: scale(0.96); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); background-color: #3b82f6; }
+                            50% { transform: scale(1.04); box-shadow: 0 0 0 40px rgba(59, 130, 246, 0); background-color: #60a5fa; }
+                            100% { transform: scale(0.96); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); background-color: #3b82f6; }
+                        }
+                        .animate-breathe { animation: breathe-blue 1000ms infinite ease-in-out; }
+                        `}
+                    </style>
+
+                    <header className="w-full flex justify-between items-center px-6 py-4 border-b border-gray-50 no-print">
+                        <div className="flex items-center gap-3">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 60" className="h-10 sm:h-12 w-auto">
+                                <path d="M40 52C40 52 10 32 10 15c0-12 18-12 30 0 12-12 30-12 30 0 0 17-30 37-30 37z" fill="#dc2626"/>
+                                <path d="M0 32h15l6-15 10 32 8-22 8 10h18" stroke="#fca5a5" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                                <text x="85" y="32" fontFamily="Inter, sans-serif" fontWeight="700" fontSize="24" fill="#1f2937">CCF Assist</text>
+                                <text x="86" y="50" fontFamily="Inter, sans-serif" fontWeight="300" fontSize="16" fill="#4b5563">by Moe</text>
+                            </svg>
+                        </div>
+
+                        <button 
+                            onClick={toggleSound}
+                            className={`p-2.5 rounded-full flex items-center justify-center transition-all duration-300 outline-none
+                                ${isSoundOn ? 'bg-gray-100 text-gray-800 shadow-inner' : 'bg-white text-gray-400 border border-gray-100'}`}
+                            title="Metronom umschalten"
+                        >
+                            {isSoundOn ? (
+                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 4L8 8H4v8h4l4 4V4zm7.5 8c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                            ) : (
+                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+                            )}
+                        </button>
+                    </header>
+
+                    <main className="flex-grow flex flex-col items-center justify-center relative w-full pb-12 px-4">
+                        {!hasStarted ? (
+                            <div className="flex flex-col items-center animate-fade-in text-center w-full max-w-md mt-6">
+                                <div className="flex bg-gray-50 rounded-full p-1 mb-8 border border-gray-100 w-full justify-between">
+                                    <button onClick={() => handleModeSwitch('15:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '15:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>15:2</button>
+                                    <button onClick={() => handleModeSwitch('30:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '30:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>30:2</button>
+                                    <button onClick={() => handleModeSwitch('continuous')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === 'continuous' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>Kontinuierlich</button>
+                                </div>
+
+                                <button 
+                                    onClick={handleStart}
+                                    className="px-10 py-6 sm:px-14 sm:py-8 bg-white border border-red-200 text-red-500 rounded-full text-4xl sm:text-5xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] hover:shadow-[0_4px_25px_rgba(239,68,68,0.15)] hover:border-red-300 hover:text-red-600 transition-all duration-300 tracking-widest outline-none active:scale-95 w-full max-w-[320px]"
+                                >
+                                    CPR gestartet?
+                                </button>
+                                
+                                <div className="mt-8 flex flex-col items-center">
+                                    <p className="text-gray-500 font-light text-base sm:text-lg max-w-sm leading-relaxed mb-6">
+                                        Tippe auf den Button, sobald die erste Thoraxkompression durchgeführt wird.
+                                    </p>
+                                    <p className="text-gray-400 font-medium text-xs sm:text-sm uppercase tracking-widest">
+                                        Zeit bis 1. Kompression
+                                    </p>
+                                    <p className="text-3xl font-light text-red-400 tabular-nums mt-1">
+                                        {formatTime(scenarioElapsedMs)}
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center w-full max-w-md pt-6">
+                                
+                                <div className="absolute top-6 left-6 flex flex-col items-start">
+                                    <span className="text-[9px] text-gray-400 tracking-widest uppercase font-medium">Einsatz-Gesamtzeit</span>
+                                    <span className="text-base font-light text-gray-500 tabular-nums mt-0.5">{formatTime(scenarioElapsedMs)}</span>
+                                </div>
+
+                                <div className="flex bg-gray-50 rounded-full p-1 mb-8 border border-gray-100 w-full justify-between mt-12 sm:mt-8">
+                                    <button onClick={() => handleModeSwitch('15:2')} className={`flex-1 py-2 rounded-full text-[10px] sm:text-xs font-medium tracking-wider transition-all duration-300 uppercase ${cprMode === '15:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400'}`}>15:2</button>
+                                    <button onClick={() => handleModeSwitch('30:2')} className={`flex-1 py-2 rounded-full text-[10px] sm:text-xs font-medium tracking-wider transition-all duration-300 uppercase ${cprMode === '30:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400'}`}>30:2</button>
+                                    <button onClick={() => handleModeSwitch('continuous')} className={`flex-1 py-2 rounded-full text-[10px] sm:text-xs font-medium tracking-wider transition-all duration-300 uppercase ${cprMode === 'continuous' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400'}`}>Kontin.</button>
+                                </div>
+
+                                <div className="text-center mb-8">
+                                    <p className="text-red-500 text-[10px] tracking-[0.2em] uppercase mb-2 font-medium">Gesamtzeit CPR</p>
+                                    <p className="text-6xl font-light text-gray-800 tracking-tight tabular-nums">
+                                        {formatTime(elapsedCprMs)}
+                                    </p>
+                                </div>
+
+                                <div className="relative flex justify-center items-center mt-4 mb-10 w-full">
+                                    
+                                    <button
+                                        onClick={handleIneffectiveVent}
+                                        className="absolute bottom-0 left-0 -translate-x-1 sm:-translate-x-4 translate-y-4 sm:translate-y-6 bg-white/95 backdrop-blur border border-orange-100 shadow-[0_8px_30px_rgba(0,0,0,0.08)] rounded-full w-24 h-24 sm:w-28 sm:h-28 flex flex-col items-center justify-center z-20 hover:bg-orange-50 active:scale-95 transition-all outline-none"
+                                    >
+                                        <span className="text-[8px] sm:text-[9px] text-orange-500 uppercase tracking-widest font-semibold mb-1 text-center leading-tight">Beatmungs-<br/>versuch</span>
+                                        <span className="text-2xl sm:text-3xl font-light text-gray-800 leading-none">{ineffectiveVents}</span>
+                                    </button>
+
+                                    <button 
+                                        onClick={togglePause}
+                                        className={`w-72 h-72 sm:w-80 sm:h-80 rounded-full flex flex-col items-center justify-center transition-all duration-300 ease-in-out outline-none select-none relative z-10
+                                            ${!isActive 
+                                                ? 'bg-red-500 text-white scale-100 shadow-[0_10px_40px_rgba(239,68,68,0.4)]'
+                                                : isAutoVentilationPause
+                                                    ? 'animate-breathe text-white'
+                                                    : 'animate-cpr-beat text-green-900' 
+                                            }
+                                        `}
+                                    >
+                                        {!isActive ? (
+                                            <>
+                                                <span className="text-4xl font-normal mb-3 tracking-wide uppercase">CPR Pause</span>
+                                                <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcf}% CCF</span>
+                                                <span className="absolute bottom-12 text-[10px] font-light tracking-widest uppercase opacity-70">
+                                                    Weiter hier drücken
+                                                </span>
+                                            </>
+                                        ) : isAutoVentilationPause ? (
+                                            <>
+                                                <span className="text-4xl font-normal mb-3 tracking-wide uppercase">Beatmung</span>
+                                                <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcf}% CCF</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span className="text-8xl font-light tracking-tighter tabular-nums">{currentCcf}<span className="text-5xl">%</span></span>
+                                                <span className="text-xl font-light mt-1 opacity-90 tracking-widest uppercase">CCF</span>
+                                                <span className="absolute bottom-14 text-[10px] font-light tracking-widest uppercase opacity-60">
+                                                    Bei CPR Pause hier drücken
+                                                </span>
+                                            </>
+                                        )}
+                                    </button>
+
+                                    <button
+                                        onClick={handleEffectiveVent}
+                                        className="absolute bottom-0 right-0 translate-x-1 sm:translate-x-4 translate-y-4 sm:translate-y-6 bg-white/95 backdrop-blur border border-blue-100 shadow-[0_8px_30px_rgba(0,0,0,0.08)] rounded-full w-24 h-24 sm:w-28 sm:h-28 flex flex-col items-center justify-center z-20 hover:bg-blue-50 active:scale-95 transition-all outline-none"
+                                    >
+                                        <span className="text-[8px] sm:text-[9px] text-blue-500 uppercase tracking-widest font-semibold mb-1 text-center leading-tight">Effektive<br/>Beatmung</span>
+                                        <span className="text-2xl sm:text-3xl font-light text-gray-800 leading-none">{effectiveVents}</span>
+                                    </button>
+
+                                </div>
+                                
+                                <div className="mt-8 flex flex-col items-center">
+                                    <button 
+                                        onClick={endScenario}
+                                        className="mt-4 px-6 py-3 rounded-full bg-gray-50 border border-gray-100 text-[10px] text-gray-500 hover:bg-red-50 hover:text-red-500 hover:border-red-100 transition-all uppercase tracking-[0.2em] font-medium"
+                                    >
+                                        Einsatz beenden & Protokoll
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
