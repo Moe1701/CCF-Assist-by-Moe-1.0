@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="CCF Assist">
 
-    <!-- Verweise auf die externen PWA-Dateien -->
+    <!-- Verweise auf die externen PWA-Dateien für den iOS Homescreen -->
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="icon.jpg">
 
@@ -25,7 +25,7 @@
     <!-- Babel für JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Registrierung des echten Service Workers für iOS -->
+    <!-- Registrierung des echten Service Workers für iOS (Offline-Fähigkeit) -->
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
@@ -67,12 +67,18 @@
         };
 
         const App = () => {
-            const [appLoadTime, setAppLoadTime] = useState(null); 
-            const [hasStarted, setHasStarted] = useState(false);  
+            // --- STATE ---
+            // Onboarding Steps: 0 = Warten auf Szenario, 1 = Warten auf BLS, 2 = Warten auf CPR, 3 = CPR läuft
+            const [onboardingStep, setOnboardingStep] = useState(0); 
             const [isFinished, setIsFinished] = useState(false);  
             
             const [now, setNow] = useState(null);
-            const [startTime, setStartTime] = useState(null);
+            
+            // Neue Zeit-Marker
+            const [scenarioStartTime, setScenarioStartTime] = useState(null);
+            const [blsCheckStartTime, setBlsCheckStartTime] = useState(null);
+            const [cprStartTime, setCprStartTime] = useState(null);
+            
             const [cprMode, setCprMode] = useState('30:2');
             const [sessions, setSessions] = useState([]);
             const [currentSession, setCurrentSession] = useState(null);
@@ -83,15 +89,14 @@
             
             const [protocolData, setProtocolData] = useState(null);
 
+            // --- REFS ---
             const audioCtxRef = useRef(null);
             const lastPlayedIdRef = useRef(null);
             const currentSessionRef = useRef(currentSession);
             const isSoundOnRef = useRef(isSoundOn);
             
             useEffect(() => {
-                const loadTime = Date.now();
-                setAppLoadTime(loadTime);
-                setNow(loadTime);
+                setNow(Date.now());
             }, []);
 
             useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
@@ -158,7 +163,7 @@
                         const currentTime = Date.now();
                         setNow(currentTime);
 
-                        if (hasStarted && isSoundOnRef.current && currentSessionRef.current) {
+                        if (onboardingStep === 3 && isSoundOnRef.current && currentSessionRef.current) {
                             const session = currentSessionRef.current;
                             const sessionDuration = currentTime - session.start;
                             let currentBeatId = null;
@@ -198,19 +203,30 @@
                     }, 30);
                 }
                 return () => clearInterval(interval);
-            }, [hasStarted, isFinished]);
+            }, [onboardingStep, isFinished]);
 
-            // --- AKTIONEN ---
-            const handleStart = () => {
+            // --- ONBOARDING AKTIONEN ---
+            const handleScenarioStart = () => {
+                setScenarioStartTime(Date.now());
+                setOnboardingStep(1);
+            };
+
+            const handleBlsCheckStart = () => {
+                setBlsCheckStartTime(Date.now());
+                setOnboardingStep(2);
+            };
+
+            const handleCprStart = () => {
                 unlockSafariAudio();
                 const currentTime = Date.now();
-                setHasStarted(true);
-                setStartTime(currentTime);
+                setCprStartTime(currentTime);
+                setOnboardingStep(3); // Wechselt in den aktiven CPR-Modus
                 setCurrentSession({ start: currentTime, mode: cprMode });
                 lastPlayedIdRef.current = null;
                 setNow(currentTime);
             };
 
+            // --- CPR AKTIONEN ---
             const togglePause = () => {
                 unlockSafariAudio();
                 const currentTime = Date.now();
@@ -262,16 +278,17 @@
                 return (fullCycles * compTime) + Math.min(remainder, compTime);
             };
 
-            let currentCcf = 100;
-            let elapsedCprMs = 0;
+            // Dynamische Zeitberechnungen
+            const scenarioElapsedMs = now && scenarioStartTime ? Math.max(0, now - scenarioStartTime) : 0;
+            const blsElapsedMs = now && blsCheckStartTime ? Math.max(0, now - blsCheckStartTime) : 0;
+            const cprElapsedMs = now && cprStartTime ? Math.max(0, now - cprStartTime) : 0;
+
+            let currentCcfBls = 100; // CCF ab BLS Check (Hauptanzeige)
+            let currentCcfScenario = 100; // CCF ab Szenario Start (nur im Protokoll wichtig)
             let totalActiveMs = 0;
             let isAutoVentilationPause = false;
-            
-            const scenarioElapsedMs = now && appLoadTime ? Math.max(0, now - appLoadTime) : 0;
 
-            if (hasStarted && now && startTime) {
-                elapsedCprMs = Math.max(0, now - startTime);
-                
+            if (onboardingStep === 3 && now && cprStartTime) {
                 sessions.forEach(s => totalActiveMs += calculateSessionActiveTime(s, s.end));
                 
                 if (currentSession) {
@@ -286,36 +303,53 @@
                     }
                 }
                 
-                if (elapsedCprMs > 0) currentCcf = Math.round((totalActiveMs / elapsedCprMs) * 100);
+                if (blsElapsedMs > 0) currentCcfBls = Math.round((totalActiveMs / blsElapsedMs) * 100);
+                if (scenarioElapsedMs > 0) currentCcfScenario = Math.round((totalActiveMs / scenarioElapsedMs) * 100);
             }
 
             const endScenario = () => {
                 const endTime = Date.now();
                 let finalSessions = [...sessions];
                 let finalActiveMs = totalActiveMs;
-                let finalElapsedCprMs = elapsedCprMs;
                 
                 if (currentSession) {
                     finalSessions.push({ ...currentSession, end: endTime });
                     finalActiveMs += calculateSessionActiveTime(currentSession, endTime);
                 }
                 
-                const ccfFinal = finalElapsedCprMs > 0 ? Math.round((finalActiveMs / finalElapsedCprMs) * 100) : 0;
-                const handsOffMs = finalElapsedCprMs - finalActiveMs;
-                const timeToFirstCompMs = startTime ? (startTime - appLoadTime) : 0;
-                const finalScenarioMs = endTime - appLoadTime;
+                const finalScenarioMs = scenarioStartTime ? Math.max(0, endTime - scenarioStartTime) : 0;
+                const finalBlsMs = blsCheckStartTime ? Math.max(0, endTime - blsCheckStartTime) : 0;
+                const finalCprMs = cprStartTime ? Math.max(0, endTime - cprStartTime) : 0;
+
+                const ccfBlsFinal = finalBlsMs > 0 ? Math.round((finalActiveMs / finalBlsMs) * 100) : 0;
+                const ccfScenarioFinal = finalScenarioMs > 0 ? Math.round((finalActiveMs / finalScenarioMs) * 100) : 0;
+                
+                // Hands Off Zeit ab dem BLS Check (die relevante medizinische Lücke)
+                const handsOffBlsMs = finalBlsMs - finalActiveMs;
+                
+                const timeToBlsMs = (scenarioStartTime && blsCheckStartTime) ? (blsCheckStartTime - scenarioStartTime) : 0;
+                const timeToCompMs = (scenarioStartTime && cprStartTime) ? (cprStartTime - scenarioStartTime) : 0;
 
                 setProtocolData({
-                    startDate: new Date(appLoadTime).toLocaleDateString('de-DE'),
-                    appLoadTimeString: formatClockTime(appLoadTime),
-                    startTimeString: formatClockTime(startTime),
+                    startDate: new Date(scenarioStartTime || Date.now()).toLocaleDateString('de-DE'),
+                    scenarioStartTimeString: formatClockTime(scenarioStartTime),
+                    blsStartTimeString: formatClockTime(blsCheckStartTime),
+                    cprStartTimeString: formatClockTime(cprStartTime),
                     endTimeString: formatClockTime(endTime),
+                    
                     scenarioTotalElapsed: formatTime(finalScenarioMs),
-                    cprTotalElapsed: formatTime(finalElapsedCprMs),
-                    ccf: ccfFinal,
-                    timeToFirstCompression: formatTime(timeToFirstCompMs),
+                    blsTotalElapsed: formatTime(finalBlsMs),
+                    cprTotalElapsed: formatTime(finalCprMs),
+                    
+                    ccfBls: ccfBlsFinal,
+                    ccfScenario: ccfScenarioFinal,
+                    
+                    timeToBlsCheck: formatTime(timeToBlsMs),
+                    timeToFirstCompression: formatTime(timeToCompMs),
+                    
                     handsOnTime: formatTime(finalActiveMs),
-                    handsOffTime: formatTime(handsOffMs),
+                    handsOffTime: formatTime(handsOffBlsMs),
+                    
                     ineffectiveVents: ineffectiveVents,
                     effectiveVents: effectiveVents,
                     totalVents: ineffectiveVents + effectiveVents
@@ -327,16 +361,17 @@
             };
 
             const resetApp = () => {
-                setHasStarted(false);
+                setOnboardingStep(0);
                 setIsFinished(false);
-                setStartTime(null);
+                setScenarioStartTime(null);
+                setBlsCheckStartTime(null);
+                setCprStartTime(null);
                 setSessions([]);
                 setCurrentSession(null);
                 setNow(Date.now());
                 setCprMode('30:2');
                 setIsSoundOn(false);
                 setProtocolData(null);
-                setAppLoadTime(Date.now()); 
                 setIneffectiveVents(0);
                 setEffectiveVents(0);
                 lastPlayedIdRef.current = null;
@@ -377,57 +412,74 @@
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-y-8 gap-x-8 mb-8">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-y-6 gap-x-6 mb-8">
                                 <div>
-                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Einsatzbeginn</p>
-                                    <p className="text-xl font-light tabular-nums">{protocolData.appLoadTimeString}</p>
+                                    <p className="text-[9px] text-gray-400 tracking-widest uppercase mb-1">1. Szenario Start</p>
+                                    <p className="text-lg font-light tabular-nums">{protocolData.scenarioStartTimeString}</p>
                                 </div>
                                 <div>
-                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">1. Kompression</p>
-                                    <p className="text-xl font-light tabular-nums">{protocolData.startTimeString}</p>
+                                    <p className="text-[9px] text-gray-400 tracking-widest uppercase mb-1">2. BLS Check</p>
+                                    <p className="text-lg font-light tabular-nums">{protocolData.blsStartTimeString}</p>
                                 </div>
                                 <div>
-                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Einsatzende</p>
-                                    <p className="text-xl font-light tabular-nums">{protocolData.endTimeString}</p>
-                                </div>
-                                
-                                <div>
-                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Gesamtzeit Einsatz</p>
-                                    <p className="text-xl font-medium text-gray-800 tabular-nums">{protocolData.scenarioTotalElapsed} <span className="text-sm font-light text-gray-400">min</span></p>
+                                    <p className="text-[9px] text-gray-400 tracking-widest uppercase mb-1">3. Kompression</p>
+                                    <p className="text-lg font-light tabular-nums">{protocolData.cprStartTimeString}</p>
                                 </div>
                                 <div>
-                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Gesamtzeit CPR</p>
-                                    <p className="text-xl font-medium text-gray-800 tabular-nums">{protocolData.cprTotalElapsed} <span className="text-sm font-light text-gray-400">min</span></p>
+                                    <p className="text-[9px] text-gray-400 tracking-widest uppercase mb-1">Einsatzende</p>
+                                    <p className="text-lg font-light tabular-nums">{protocolData.endTimeString}</p>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-y-6 gap-x-6 mb-8 border-t border-gray-100 pt-6">
+                                <div>
+                                    <p className="text-[9px] text-gray-400 tracking-widest uppercase mb-1">Gesamtzeit Einsatz</p>
+                                    <p className="text-xl font-medium text-gray-800 tabular-nums">{protocolData.scenarioTotalElapsed} <span className="text-xs font-light text-gray-400">min</span></p>
                                 </div>
                                 <div>
-                                    <p className="text-[10px] text-gray-400 tracking-widest uppercase mb-1">Zeit bis 1. Kompr.</p>
-                                    <p className="text-xl font-light tabular-nums text-red-500">{protocolData.timeToFirstCompression} <span className="text-sm text-red-300">min</span></p>
+                                    <p className="text-[9px] text-gray-400 tracking-widest uppercase mb-1">Zeit bis BLS Check</p>
+                                    <p className="text-xl font-light tabular-nums text-gray-600">{protocolData.timeToBlsCheck} <span className="text-xs text-gray-400">min</span></p>
+                                </div>
+                                <div>
+                                    <p className="text-[9px] text-gray-400 tracking-widest uppercase mb-1">Zeit bis 1. Kompr.</p>
+                                    <p className="text-xl font-light tabular-nums text-red-500">{protocolData.timeToFirstCompression} <span className="text-xs text-red-300">min</span></p>
+                                </div>
+                                <div>
+                                    <p className="text-[9px] text-gray-400 tracking-widest uppercase mb-1">Reine CPR Dauer</p>
+                                    <p className="text-xl font-medium text-gray-800 tabular-nums">{protocolData.cprTotalElapsed} <span className="text-xs font-light text-gray-400">min</span></p>
                                 </div>
                             </div>
 
                             <div className="mt-4 pt-8 border-t border-gray-100">
                                 <h2 className="text-sm font-medium text-gray-900 tracking-widest uppercase mb-6">Qualitätsindikatoren (CPR)</h2>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    <div className="bg-gray-50 rounded-xl p-5 md:col-span-1">
-                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">Chest Compression Fraction</p>
-                                        <p className={`text-5xl font-light tabular-nums ${protocolData.ccf >= 80 ? 'text-green-600' : 'text-amber-500'}`}>
-                                            {protocolData.ccf}<span className="text-2xl">%</span>
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                                    <div className="bg-green-50/50 border border-green-100 rounded-xl p-4 md:col-span-2">
+                                        <p className="text-[10px] text-green-700 tracking-widest uppercase mb-2">CCF (ab BLS Check)</p>
+                                        <p className={`text-5xl font-light tabular-nums ${protocolData.ccfBls >= 80 ? 'text-green-600' : 'text-amber-500'}`}>
+                                            {protocolData.ccfBls}<span className="text-2xl">%</span>
                                         </p>
-                                        <p className="text-[10px] text-gray-400 mt-2 uppercase tracking-wide">Ziel: {">"} 80%</p>
+                                        <p className="text-[10px] text-gray-500 mt-2">Klinisch relevanter Hauptwert</p>
                                     </div>
-                                    <div className="bg-gray-50 rounded-xl p-5">
+                                    <div className="bg-gray-50 rounded-xl p-4 md:col-span-2">
+                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">CCF (ab Szenario Start)</p>
+                                        <p className="text-4xl font-light tabular-nums text-gray-700 mt-1">
+                                            {protocolData.ccfScenario}<span className="text-xl">%</span>
+                                        </p>
+                                        <p className="text-[10px] text-gray-400 mt-2">Inkl. Anfahrt/Beurteilungszeit</p>
+                                    </div>
+                                    <div className="bg-gray-50 rounded-xl p-4 md:col-span-2">
                                         <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">Hands-On (Aktiv)</p>
-                                        <p className="text-3xl font-light tabular-nums text-gray-800 mt-2">
-                                            {protocolData.handsOnTime} <span className="text-lg text-gray-400">min</span>
+                                        <p className="text-2xl font-light tabular-nums text-gray-800 mt-1">
+                                            {protocolData.handsOnTime} <span className="text-sm text-gray-400">min</span>
                                         </p>
-                                        <p className="text-[10px] text-gray-400 mt-3 uppercase tracking-wide">Reine Kompressionszeit</p>
+                                        <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-wide">Reine Kompressionszeit</p>
                                     </div>
-                                    <div className="bg-gray-50 rounded-xl p-5">
-                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">Hands-Off (Pausen)</p>
-                                        <p className="text-3xl font-light tabular-nums text-gray-800 mt-2">
-                                            {protocolData.handsOffTime} <span className="text-lg text-gray-400">min</span>
+                                    <div className="bg-gray-50 rounded-xl p-4 md:col-span-2">
+                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">Hands-Off (Pausen ab BLS)</p>
+                                        <p className="text-2xl font-light tabular-nums text-gray-800 mt-1">
+                                            {protocolData.handsOffTime} <span className="text-sm text-gray-400">min</span>
                                         </p>
-                                        <p className="text-[10px] text-gray-400 mt-3 uppercase tracking-wide">Summe aller Unterbrechungen</p>
+                                        <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-wide">Pausen & Beatmungen</p>
                                     </div>
                                 </div>
                             </div>
@@ -435,17 +487,17 @@
                             <div className="mt-8 pt-8 border-t border-gray-100">
                                 <h2 className="text-sm font-medium text-gray-900 tracking-widest uppercase mb-6">Beatmung (Instruktor-Log)</h2>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    <div className="bg-gray-50 border border-gray-100 rounded-xl p-5">
-                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">Versuche Gesamt</p>
-                                        <p className="text-3xl font-light tabular-nums text-gray-800 mt-2">{protocolData.totalVents}</p>
+                                    <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
+                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-1">Versuche Gesamt</p>
+                                        <p className="text-2xl font-light tabular-nums text-gray-800">{protocolData.totalVents}</p>
                                     </div>
-                                    <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-5">
-                                        <p className="text-[10px] text-blue-600 tracking-widest uppercase mb-2">Davon Effektiv</p>
-                                        <p className="text-3xl font-light tabular-nums text-blue-700 mt-2">{protocolData.effectiveVents}</p>
+                                    <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-4">
+                                        <p className="text-[10px] text-blue-600 tracking-widest uppercase mb-1">Davon Effektiv</p>
+                                        <p className="text-2xl font-light tabular-nums text-blue-700">{protocolData.effectiveVents}</p>
                                     </div>
-                                    <div className="bg-orange-50/50 border border-orange-100 rounded-xl p-5">
-                                        <p className="text-[10px] text-orange-600 tracking-widest uppercase mb-2">Davon Ineffektiv</p>
-                                        <p className="text-3xl font-light tabular-nums text-orange-700 mt-2">{protocolData.ineffectiveVents}</p>
+                                    <div className="bg-orange-50/50 border border-orange-100 rounded-xl p-4">
+                                        <p className="text-[10px] text-orange-600 tracking-widest uppercase mb-1">Davon Ineffektiv</p>
+                                        <p className="text-2xl font-light tabular-nums text-orange-700">{protocolData.ineffectiveVents}</p>
                                     </div>
                                 </div>
                             </div>
@@ -502,49 +554,105 @@
                             </svg>
                         </div>
 
-                        <button 
-                            onClick={toggleSound}
-                            className={`p-2.5 rounded-full flex items-center justify-center transition-all duration-300 outline-none
-                                ${isSoundOn ? 'bg-gray-100 text-gray-800 shadow-inner' : 'bg-white text-gray-400 border border-gray-100'}`}
-                            title="Metronom umschalten"
-                        >
-                            {isSoundOn ? (
-                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 4L8 8H4v8h4l4 4V4zm7.5 8c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-                            ) : (
-                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
-                            )}
-                        </button>
+                        {onboardingStep === 3 && (
+                            <button 
+                                onClick={toggleSound}
+                                className={`p-2.5 rounded-full flex items-center justify-center transition-all duration-300 outline-none
+                                    ${isSoundOn ? 'bg-gray-100 text-gray-800 shadow-inner' : 'bg-white text-gray-400 border border-gray-100'}`}
+                                title="Metronom umschalten"
+                            >
+                                {isSoundOn ? (
+                                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 4L8 8H4v8h4l4 4V4zm7.5 8c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                                ) : (
+                                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+                                )}
+                            </button>
+                        )}
                     </header>
 
                     <main className="flex-grow flex flex-col items-center justify-center relative w-full pb-12 px-4">
-                        {!hasStarted ? (
+                        
+                        {/* --- MULTI-STEP ONBOARDING --- */}
+                        {onboardingStep < 3 ? (
                             <div className="flex flex-col items-center animate-fade-in text-center w-full max-w-md mt-6">
+                                
+                                {/* Modus-Auswahl bleibt immer sichtbar */}
                                 <div className="flex bg-gray-50 rounded-full p-1 mb-8 border border-gray-100 w-full justify-between">
                                     <button onClick={() => handleModeSwitch('15:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '15:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>15:2</button>
                                     <button onClick={() => handleModeSwitch('30:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '30:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>30:2</button>
                                     <button onClick={() => handleModeSwitch('continuous')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === 'continuous' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>Kontinuierlich</button>
                                 </div>
 
-                                <button 
-                                    onClick={handleStart}
-                                    className="px-10 py-6 sm:px-14 sm:py-8 bg-white border border-red-200 text-red-500 rounded-full text-4xl sm:text-5xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] hover:shadow-[0_4px_25px_rgba(239,68,68,0.15)] hover:border-red-300 hover:text-red-600 transition-all duration-300 tracking-widest outline-none active:scale-95 w-full max-w-[320px]"
-                                >
-                                    CPR gestartet?
-                                </button>
-                                
-                                <div className="mt-8 flex flex-col items-center">
-                                    <p className="text-gray-500 font-light text-base sm:text-lg max-w-sm leading-relaxed mb-6">
-                                        Tippe auf den Button, sobald die erste Thoraxkompression durchgeführt wird.
-                                    </p>
-                                    <p className="text-gray-400 font-medium text-xs sm:text-sm uppercase tracking-widest">
-                                        Zeit bis 1. Kompression
-                                    </p>
-                                    <p className="text-3xl font-light text-red-400 tabular-nums mt-1">
-                                        {formatTime(scenarioElapsedMs)}
-                                    </p>
-                                </div>
+                                {/* STEP 0: Szenario Start */}
+                                {onboardingStep === 0 && (
+                                    <>
+                                        <button 
+                                            onClick={handleScenarioStart}
+                                            className="px-10 py-6 sm:px-14 sm:py-8 bg-white border border-red-200 text-red-500 rounded-full text-3xl sm:text-4xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] hover:shadow-[0_4px_25px_rgba(239,68,68,0.15)] hover:border-red-300 hover:text-red-600 transition-all duration-300 tracking-widest outline-none active:scale-95 w-full max-w-[320px]"
+                                        >
+                                            Szenario Start
+                                        </button>
+                                        <div className="mt-8 flex flex-col items-center">
+                                            <p className="text-gray-500 font-light text-base sm:text-lg max-w-sm leading-relaxed mb-6">
+                                                Tippe auf den Button, sobald das Szenario (Einsatzbeginn) startet.
+                                            </p>
+                                        </div>
+                                    </>
+                                )}
+
+                                {/* STEP 1: BLS Check */}
+                                {onboardingStep === 1 && (
+                                    <>
+                                        <button 
+                                            onClick={handleBlsCheckStart}
+                                            className="px-8 py-6 sm:px-10 sm:py-8 bg-white border border-red-200 text-red-500 rounded-full text-2xl sm:text-3xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] hover:shadow-[0_4px_25px_rgba(239,68,68,0.15)] hover:border-red-300 hover:text-red-600 transition-all duration-300 tracking-widest outline-none active:scale-95 w-full max-w-[350px]"
+                                        >
+                                            BLS Check gestartet
+                                        </button>
+                                        <div className="mt-8 flex flex-col items-center">
+                                            <p className="text-gray-500 font-light text-base sm:text-lg max-w-sm leading-relaxed mb-6">
+                                                Tippe hier, sobald die Patientenbeurteilung (BLS Check) beginnt.
+                                            </p>
+                                            <p className="text-gray-400 font-medium text-xs sm:text-sm uppercase tracking-widest">
+                                                Szenario-Zeit läuft
+                                            </p>
+                                            <p className="text-3xl font-light text-red-400 tabular-nums mt-1">
+                                                {formatTime(scenarioElapsedMs)}
+                                            </p>
+                                        </div>
+                                    </>
+                                )}
+
+                                {/* STEP 2: CPR Start */}
+                                {onboardingStep === 2 && (
+                                    <>
+                                        <button 
+                                            onClick={handleCprStart}
+                                            className="px-6 py-6 sm:px-8 sm:py-8 bg-white border border-red-200 text-red-500 rounded-full text-xl sm:text-2xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] hover:shadow-[0_4px_25px_rgba(239,68,68,0.15)] hover:border-red-300 hover:text-red-600 transition-all duration-300 tracking-widest outline-none active:scale-95 w-full max-w-[380px]"
+                                        >
+                                            Thoraxkompressionen gestartet
+                                        </button>
+                                        <div className="mt-8 flex flex-col items-center">
+                                            <p className="text-gray-500 font-light text-base sm:text-lg max-w-sm leading-relaxed mb-6">
+                                                Tippe hier bei der ersten Thoraxkompression, um das Metronom zu starten.
+                                            </p>
+                                            <div className="flex gap-8">
+                                                <div className="flex flex-col items-center">
+                                                    <p className="text-gray-400 font-medium text-[10px] uppercase tracking-widest">Szenario-Zeit</p>
+                                                    <p className="text-2xl font-light text-red-400 tabular-nums mt-1">{formatTime(scenarioElapsedMs)}</p>
+                                                </div>
+                                                <div className="flex flex-col items-center">
+                                                    <p className="text-gray-400 font-medium text-[10px] uppercase tracking-widest">BLS-Dauer</p>
+                                                    <p className="text-2xl font-light text-gray-500 tabular-nums mt-1">{formatTime(blsElapsedMs)}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
                             </div>
+
                         ) : (
+                            // --- ACTIVE / PAUSED SCREEN (STEP 3) ---
                             <div className="flex flex-col items-center w-full max-w-md pt-6">
                                 
                                 <div className="absolute top-6 left-6 flex flex-col items-start">
@@ -561,10 +669,11 @@
                                 <div className="text-center mb-8">
                                     <p className="text-red-500 text-[10px] tracking-[0.2em] uppercase mb-2 font-medium">Gesamtzeit CPR</p>
                                     <p className="text-6xl font-light text-gray-800 tracking-tight tabular-nums">
-                                        {formatTime(elapsedCprMs)}
+                                        {formatTime(cprElapsedMs)}
                                     </p>
                                 </div>
 
+                                {/* CONTAINER FÜR HAUPTBUTTON & RUNDE SATELLITEN */}
                                 <div className="relative flex justify-center items-center mt-4 mb-10 w-full">
                                     
                                     <button
@@ -589,7 +698,7 @@
                                         {!isActive ? (
                                             <>
                                                 <span className="text-4xl font-normal mb-3 tracking-wide uppercase">CPR Pause</span>
-                                                <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcf}% CCF</span>
+                                                <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcfBls}% CCF</span>
                                                 <span className="absolute bottom-12 text-[10px] font-light tracking-widest uppercase opacity-70">
                                                     Weiter hier drücken
                                                 </span>
@@ -597,11 +706,11 @@
                                         ) : isAutoVentilationPause ? (
                                             <>
                                                 <span className="text-4xl font-normal mb-3 tracking-wide uppercase">Beatmung</span>
-                                                <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcf}% CCF</span>
+                                                <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcfBls}% CCF</span>
                                             </>
                                         ) : (
                                             <>
-                                                <span className="text-8xl font-light tracking-tighter tabular-nums">{currentCcf}<span className="text-5xl">%</span></span>
+                                                <span className="text-8xl font-light tracking-tighter tabular-nums">{currentCcfBls}<span className="text-5xl">%</span></span>
                                                 <span className="text-xl font-light mt-1 opacity-90 tracking-widest uppercase">CCF</span>
                                                 <span className="absolute bottom-14 text-[10px] font-light tracking-widest uppercase opacity-60">
                                                     Bei CPR Pause hier drücken
