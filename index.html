@@ -221,7 +221,11 @@
                 const currentTime = Date.now();
                 setCprStartTime(currentTime);
                 setOnboardingStep(3); // Wechselt in den aktiven CPR-Modus
-                setCurrentSession({ start: currentTime, mode: cprMode });
+                
+                const newSession = { start: currentTime, mode: cprMode };
+                setCurrentSession(newSession);
+                currentSessionRef.current = newSession; // Ref sofort setzen
+                
                 lastPlayedIdRef.current = null;
                 setNow(currentTime);
             };
@@ -230,21 +234,28 @@
             const togglePause = () => {
                 unlockSafariAudio();
                 const currentTime = Date.now();
-                if (currentSession) {
-                    setSessions(prev => [...prev, { ...currentSession, end: currentTime }]);
+                
+                // Wir nutzen currentSessionRef.current, um den Stale State/Double-Click Bug zu verhindern
+                if (currentSessionRef.current) {
+                    setSessions(prev => [...prev, { ...currentSessionRef.current, end: currentTime }]);
                     setCurrentSession(null);
+                    currentSessionRef.current = null; // Sofort blockieren
                     lastPlayedIdRef.current = null; 
                 } else {
-                    setCurrentSession({ start: currentTime, mode: cprMode });
+                    const newSession = { start: currentTime, mode: cprMode };
+                    setCurrentSession(newSession);
+                    currentSessionRef.current = newSession;
                 }
             };
 
             const handleModeSwitch = (newMode) => {
                 setCprMode(newMode);
-                if (currentSession) {
+                if (currentSessionRef.current) {
                     const currentTime = Date.now();
-                    setSessions(prev => [...prev, { ...currentSession, end: currentTime }]);
-                    setCurrentSession({ start: currentTime, mode: newMode });
+                    setSessions(prev => [...prev, { ...currentSessionRef.current, end: currentTime }]);
+                    const newSession = { start: currentTime, mode: newMode };
+                    setCurrentSession(newSession);
+                    currentSessionRef.current = newSession;
                     lastPlayedIdRef.current = null; 
                 }
             };
@@ -266,7 +277,7 @@
 
             // --- BERECHNUNGEN ---
             const calculateSessionActiveTime = (session, endTime) => {
-                const duration = endTime - session.start;
+                const duration = Math.max(0, endTime - session.start);
                 if (session.mode === 'continuous') return duration;
                 
                 const config = CPR_MODES[session.mode];
@@ -283,28 +294,33 @@
             const blsElapsedMs = now && blsCheckStartTime ? Math.max(0, now - blsCheckStartTime) : 0;
             const cprElapsedMs = now && cprStartTime ? Math.max(0, now - cprStartTime) : 0;
 
-            let currentCcfBls = 100; // CCF ab BLS Check (Hauptanzeige)
-            let currentCcfScenario = 100; // CCF ab Szenario Start (nur im Protokoll wichtig)
+            let currentCcfBls = 0; 
+            let currentCcfScenario = 0; 
             let totalActiveMs = 0;
             let isAutoVentilationPause = false;
 
             if (onboardingStep === 3 && now && cprStartTime) {
                 sessions.forEach(s => totalActiveMs += calculateSessionActiveTime(s, s.end));
                 
-                if (currentSession) {
-                    totalActiveMs += calculateSessionActiveTime(currentSession, now);
-                    if (currentSession.mode !== 'continuous') {
-                        const config = CPR_MODES[currentSession.mode];
+                if (currentSessionRef.current) {
+                    totalActiveMs += calculateSessionActiveTime(currentSessionRef.current, now);
+                    if (currentSessionRef.current.mode !== 'continuous') {
+                        const config = CPR_MODES[currentSessionRef.current.mode];
                         const compTime = config.compressions * MS_PER_COMPRESSION;
                         const cycleTime = compTime + config.ventTime;
-                        if ((now - currentSession.start) % cycleTime >= compTime) {
+                        if ((now - currentSessionRef.current.start) % cycleTime >= compTime) {
                             isAutoVentilationPause = true;
                         }
                     }
                 }
                 
-                if (blsElapsedMs > 0) currentCcfBls = Math.round((totalActiveMs / blsElapsedMs) * 100);
-                if (scenarioElapsedMs > 0) currentCcfScenario = Math.round((totalActiveMs / scenarioElapsedMs) * 100);
+                // Werte auf max 100 limitieren
+                if (blsElapsedMs > 0) {
+                    currentCcfBls = Math.min(100, Math.round((totalActiveMs / blsElapsedMs) * 100));
+                }
+                if (scenarioElapsedMs > 0) {
+                    currentCcfScenario = Math.min(100, Math.round((totalActiveMs / scenarioElapsedMs) * 100));
+                }
             }
 
             const endScenario = () => {
@@ -312,23 +328,23 @@
                 let finalSessions = [...sessions];
                 let finalActiveMs = totalActiveMs;
                 
-                if (currentSession) {
-                    finalSessions.push({ ...currentSession, end: endTime });
-                    finalActiveMs += calculateSessionActiveTime(currentSession, endTime);
+                if (currentSessionRef.current) {
+                    finalSessions.push({ ...currentSessionRef.current, end: endTime });
+                    // Neu berechnen zur Vermeidung von State-Drifts
+                    finalActiveMs = finalSessions.reduce((acc, s) => acc + calculateSessionActiveTime(s, s.end), 0);
                 }
                 
                 const finalScenarioMs = scenarioStartTime ? Math.max(0, endTime - scenarioStartTime) : 0;
                 const finalBlsMs = blsCheckStartTime ? Math.max(0, endTime - blsCheckStartTime) : 0;
                 const finalCprMs = cprStartTime ? Math.max(0, endTime - cprStartTime) : 0;
 
-                const ccfBlsFinal = finalBlsMs > 0 ? Math.round((finalActiveMs / finalBlsMs) * 100) : 0;
-                const ccfScenarioFinal = finalScenarioMs > 0 ? Math.round((finalActiveMs / finalScenarioMs) * 100) : 0;
+                const ccfBlsFinal = finalBlsMs > 0 ? Math.min(100, Math.round((finalActiveMs / finalBlsMs) * 100)) : 0;
+                const ccfScenarioFinal = finalScenarioMs > 0 ? Math.min(100, Math.round((finalActiveMs / finalScenarioMs) * 100)) : 0;
                 
-                // Hands Off Zeit ab dem BLS Check (die relevante medizinische Lücke)
-                const handsOffBlsMs = finalBlsMs - finalActiveMs;
+                const handsOffBlsMs = Math.max(0, finalBlsMs - finalActiveMs);
                 
-                const timeToBlsMs = (scenarioStartTime && blsCheckStartTime) ? (blsCheckStartTime - scenarioStartTime) : 0;
-                const timeToCompMs = (scenarioStartTime && cprStartTime) ? (cprStartTime - scenarioStartTime) : 0;
+                const timeToBlsMs = (scenarioStartTime && blsCheckStartTime) ? Math.max(0, blsCheckStartTime - scenarioStartTime) : 0;
+                const timeToCompMs = (scenarioStartTime && cprStartTime) ? Math.max(0, cprStartTime - scenarioStartTime) : 0;
 
                 setProtocolData({
                     startDate: new Date(scenarioStartTime || Date.now()).toLocaleDateString('de-DE'),
@@ -356,6 +372,7 @@
                 });
 
                 setCurrentSession(null);
+                currentSessionRef.current = null;
                 setIsSoundOn(false); 
                 setIsFinished(true); 
             };
@@ -368,6 +385,7 @@
                 setCprStartTime(null);
                 setSessions([]);
                 setCurrentSession(null);
+                currentSessionRef.current = null;
                 setNow(Date.now());
                 setCprMode('30:2');
                 setIsSoundOn(false);
@@ -546,6 +564,7 @@
 
                     <header className="w-full flex justify-between items-center px-6 py-4 border-b border-gray-50 no-print">
                         <div className="flex items-center gap-3">
+                            {/* Logo in der App-Leiste */}
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 60" className="h-10 sm:h-12 w-auto">
                                 <path d="M40 52C40 52 10 32 10 15c0-12 18-12 30 0 12-12 30-12 30 0 0 17-30 37-30 37z" fill="#dc2626"/>
                                 <path d="M0 32h15l6-15 10 32 8-22 8 10h18" stroke="#fca5a5" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
