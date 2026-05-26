@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -5,33 +6,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>CCF Assist by Moe</title>
     
-    <!-- Spezifische iOS PWA Meta-Tags -->
     <meta name="theme-color" content="#ffffff">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="CCF Assist">
 
-    <!-- Verweise auf die externen PWA-Dateien für den iOS Homescreen -->
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="icon.jpg">
 
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    
-    <!-- Babel für JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Registrierung des echten Service Workers für iOS (Offline-Fähigkeit) -->
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js')
-                    .then(reg => console.log('Service Worker erfolgreich registriert.'))
-                    .catch(err => console.warn('Service Worker Registrierung fehlgeschlagen:', err));
+                navigator.serviceWorker.register('sw.js').catch(() => {});
             });
         }
     </script>
@@ -42,7 +33,6 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // --- KONSTANTEN ---
         const BPM = 110;
         const MS_PER_COMPRESSION = 60000 / BPM;
 
@@ -67,14 +57,10 @@
         };
 
         const App = () => {
-            // --- STATE ---
-            // Onboarding Steps: 0 = Warten auf Szenario, 1 = Warten auf BLS, 2 = Warten auf CPR, 3 = CPR läuft
             const [onboardingStep, setOnboardingStep] = useState(0); 
             const [isFinished, setIsFinished] = useState(false);  
-            
             const [now, setNow] = useState(null);
             
-            // Neue Zeit-Marker
             const [scenarioStartTime, setScenarioStartTime] = useState(null);
             const [blsCheckStartTime, setBlsCheckStartTime] = useState(null);
             const [cprStartTime, setCprStartTime] = useState(null);
@@ -89,20 +75,16 @@
             
             const [protocolData, setProtocolData] = useState(null);
 
-            // --- REFS ---
             const audioCtxRef = useRef(null);
             const lastPlayedIdRef = useRef(null);
             const currentSessionRef = useRef(currentSession);
             const isSoundOnRef = useRef(isSoundOn);
             
-            useEffect(() => {
-                setNow(Date.now());
-            }, []);
+            useEffect(() => { setNow(Date.now()); }, []);
 
             useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
             useEffect(() => { isSoundOnRef.current = isSoundOn; }, [isSoundOn]);
 
-            // --- AUDIO GENERATOR (iOS OPTIMIERT) ---
             const unlockSafariAudio = () => {
                 if (!audioCtxRef.current) {
                     audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -125,17 +107,14 @@
                 if (!audioCtxRef.current) return;
                 const ctx = audioCtxRef.current;
                 
-                if (ctx.state === 'suspended') {
-                    ctx.resume().catch(() => {});
-                }
+                if (ctx.state === 'suspended') ctx.resume().catch(() => {});
 
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
-
                 osc.connect(gain);
                 gain.connect(ctx.destination);
-
                 const t = ctx.currentTime;
+
                 if (type === 'compression') {
                     osc.type = 'sine';
                     osc.frequency.setValueAtTime(220, t);
@@ -155,7 +134,6 @@
                 }
             };
 
-            // --- TAKTGEBER ---
             useEffect(() => {
                 let interval;
                 if (!isFinished) {
@@ -205,7 +183,6 @@
                 return () => clearInterval(interval);
             }, [onboardingStep, isFinished]);
 
-            // --- ONBOARDING AKTIONEN ---
             const handleScenarioStart = () => {
                 setScenarioStartTime(Date.now());
                 setOnboardingStep(1);
@@ -220,44 +197,38 @@
                 unlockSafariAudio();
                 const currentTime = Date.now();
                 setCprStartTime(currentTime);
-                setOnboardingStep(3); // Wechselt in den aktiven CPR-Modus
-                
-                const newSession = { start: currentTime, mode: cprMode };
-                setCurrentSession(newSession);
-                currentSessionRef.current = newSession; // Ref sofort setzen
-                
+                setOnboardingStep(3);
+                setCurrentSession({ start: currentTime, mode: cprMode });
                 lastPlayedIdRef.current = null;
                 setNow(currentTime);
             };
 
-            // --- CPR AKTIONEN ---
+            // BUGFIX: Functional State Updates verhindern, dass schnelle Doppelklicks Sessions doppelt anlegen
             const togglePause = () => {
                 unlockSafariAudio();
                 const currentTime = Date.now();
-                
-                // Wir nutzen currentSessionRef.current, um den Stale State/Double-Click Bug zu verhindern
-                if (currentSessionRef.current) {
-                    setSessions(prev => [...prev, { ...currentSessionRef.current, end: currentTime }]);
-                    setCurrentSession(null);
-                    currentSessionRef.current = null; // Sofort blockieren
-                    lastPlayedIdRef.current = null; 
-                } else {
-                    const newSession = { start: currentTime, mode: cprMode };
-                    setCurrentSession(newSession);
-                    currentSessionRef.current = newSession;
-                }
+                setCurrentSession(prevSession => {
+                    if (prevSession) {
+                        setSessions(prevSessions => [...prevSessions, { ...prevSession, end: currentTime }]);
+                        return null;
+                    } else {
+                        return { start: currentTime, mode: cprMode };
+                    }
+                });
+                lastPlayedIdRef.current = null;
             };
 
             const handleModeSwitch = (newMode) => {
                 setCprMode(newMode);
-                if (currentSessionRef.current) {
-                    const currentTime = Date.now();
-                    setSessions(prev => [...prev, { ...currentSessionRef.current, end: currentTime }]);
-                    const newSession = { start: currentTime, mode: newMode };
-                    setCurrentSession(newSession);
-                    currentSessionRef.current = newSession;
-                    lastPlayedIdRef.current = null; 
-                }
+                setCurrentSession(prevSession => {
+                    if (prevSession) {
+                        const currentTime = Date.now();
+                        setSessions(prevSessions => [...prevSessions, { ...prevSession, end: currentTime }]);
+                        return { start: currentTime, mode: newMode };
+                    }
+                    return null;
+                });
+                lastPlayedIdRef.current = null;
             };
 
             const toggleSound = () => {
@@ -275,7 +246,7 @@
                 setEffectiveVents(prev => prev + 1);
             };
 
-            // --- BERECHNUNGEN ---
+            // --- BERECHNUNGEN (KORRIGIERT) ---
             const calculateSessionActiveTime = (session, endTime) => {
                 const duration = Math.max(0, endTime - session.start);
                 if (session.mode === 'continuous') return duration;
@@ -289,7 +260,6 @@
                 return (fullCycles * compTime) + Math.min(remainder, compTime);
             };
 
-            // Dynamische Zeitberechnungen
             const scenarioElapsedMs = now && scenarioStartTime ? Math.max(0, now - scenarioStartTime) : 0;
             const blsElapsedMs = now && blsCheckStartTime ? Math.max(0, now - blsCheckStartTime) : 0;
             const cprElapsedMs = now && cprStartTime ? Math.max(0, now - cprStartTime) : 0;
@@ -300,38 +270,36 @@
             let isAutoVentilationPause = false;
 
             if (onboardingStep === 3 && now && cprStartTime) {
-                sessions.forEach(s => totalActiveMs += calculateSessionActiveTime(s, s.end));
+                // Berechne reine Historie
+                let activeMsTemp = sessions.reduce((acc, s) => acc + calculateSessionActiveTime(s, s.end), 0);
                 
-                if (currentSessionRef.current) {
-                    totalActiveMs += calculateSessionActiveTime(currentSessionRef.current, now);
-                    if (currentSessionRef.current.mode !== 'continuous') {
-                        const config = CPR_MODES[currentSessionRef.current.mode];
+                if (currentSession) {
+                    activeMsTemp += calculateSessionActiveTime(currentSession, now);
+                    if (currentSession.mode !== 'continuous') {
+                        const config = CPR_MODES[currentSession.mode];
                         const compTime = config.compressions * MS_PER_COMPRESSION;
                         const cycleTime = compTime + config.ventTime;
-                        if ((now - currentSessionRef.current.start) % cycleTime >= compTime) {
+                        if ((now - currentSession.start) % cycleTime >= compTime) {
                             isAutoVentilationPause = true;
                         }
                     }
                 }
                 
-                // Werte auf max 100 limitieren
-                if (blsElapsedMs > 0) {
-                    currentCcfBls = Math.min(100, Math.round((totalActiveMs / blsElapsedMs) * 100));
-                }
-                if (scenarioElapsedMs > 0) {
-                    currentCcfScenario = Math.min(100, Math.round((totalActiveMs / scenarioElapsedMs) * 100));
-                }
+                totalActiveMs = activeMsTemp;
+                
+                if (blsElapsedMs > 0) currentCcfBls = Math.min(100, Math.round((totalActiveMs / blsElapsedMs) * 100));
+                if (scenarioElapsedMs > 0) currentCcfScenario = Math.min(100, Math.round((totalActiveMs / scenarioElapsedMs) * 100));
             }
 
+            // BUGFIX: Protocol Erstellung
             const endScenario = () => {
                 const endTime = Date.now();
-                let finalSessions = [...sessions];
-                let finalActiveMs = totalActiveMs;
                 
-                if (currentSessionRef.current) {
-                    finalSessions.push({ ...currentSessionRef.current, end: endTime });
-                    // Neu berechnen zur Vermeidung von State-Drifts
-                    finalActiveMs = finalSessions.reduce((acc, s) => acc + calculateSessionActiveTime(s, s.end), 0);
+                // Wir berechnen hier die finalActiveMs absolut frisch und sauber nur aus den Elementen!
+                let finalActiveMs = sessions.reduce((acc, s) => acc + calculateSessionActiveTime(s, s.end), 0);
+                
+                if (currentSession) {
+                    finalActiveMs += calculateSessionActiveTime(currentSession, endTime);
                 }
                 
                 const finalScenarioMs = scenarioStartTime ? Math.max(0, endTime - scenarioStartTime) : 0;
@@ -372,7 +340,6 @@
                 });
 
                 setCurrentSession(null);
-                currentSessionRef.current = null;
                 setIsSoundOn(false); 
                 setIsFinished(true); 
             };
@@ -385,7 +352,6 @@
                 setCprStartTime(null);
                 setSessions([]);
                 setCurrentSession(null);
-                currentSessionRef.current = null;
                 setNow(Date.now());
                 setCprMode('30:2');
                 setIsSoundOn(false);
@@ -527,7 +493,7 @@
 
                         <div className="no-print mt-10 flex flex-col sm:flex-row gap-4 w-full max-w-2xl">
                             <button onClick={handlePrint} className="flex-1 bg-gray-900 text-white py-4 rounded-xl font-medium tracking-wide flex justify-center items-center gap-2 hover:bg-gray-800 transition-colors">
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
                                 Als PDF exportieren
                             </button>
                             <button onClick={resetApp} className="flex-1 bg-white border border-gray-200 text-gray-600 py-4 rounded-xl font-medium tracking-wide hover:bg-gray-50 transition-colors">
@@ -564,7 +530,6 @@
 
                     <header className="w-full flex justify-between items-center px-6 py-4 border-b border-gray-50 no-print">
                         <div className="flex items-center gap-3">
-                            {/* Logo in der App-Leiste */}
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 60" className="h-10 sm:h-12 w-auto">
                                 <path d="M40 52C40 52 10 32 10 15c0-12 18-12 30 0 12-12 30-12 30 0 0 17-30 37-30 37z" fill="#dc2626"/>
                                 <path d="M0 32h15l6-15 10 32 8-22 8 10h18" stroke="#fca5a5" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
@@ -595,7 +560,7 @@
                         {onboardingStep < 3 ? (
                             <div className="flex flex-col items-center animate-fade-in text-center w-full max-w-md mt-6">
                                 
-                                {/* Modus-Auswahl bleibt immer sichtbar */}
+                                {/* Modus-Auswahl */}
                                 <div className="flex bg-gray-50 rounded-full p-1 mb-8 border border-gray-100 w-full justify-between">
                                     <button onClick={() => handleModeSwitch('15:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '15:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>15:2</button>
                                     <button onClick={() => handleModeSwitch('30:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '30:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>30:2</button>
@@ -706,7 +671,7 @@
                                     <button 
                                         onClick={togglePause}
                                         className={`w-72 h-72 sm:w-80 sm:h-80 rounded-full flex flex-col items-center justify-center transition-all duration-300 ease-in-out outline-none select-none relative z-10
-                                            ${!isActive 
+                                            ${!currentSession 
                                                 ? 'bg-red-500 text-white scale-100 shadow-[0_10px_40px_rgba(239,68,68,0.4)]'
                                                 : isAutoVentilationPause
                                                     ? 'animate-breathe text-white'
@@ -714,7 +679,7 @@
                                             }
                                         `}
                                     >
-                                        {!isActive ? (
+                                        {!currentSession ? (
                                             <>
                                                 <span className="text-4xl font-normal mb-3 tracking-wide uppercase">CPR Pause</span>
                                                 <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcfBls}% CCF</span>
