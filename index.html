@@ -293,6 +293,13 @@
             const blsElapsedMs = now && blsCheckStartTime ? Math.max(0, now - blsCheckStartTime) : 0;
             const cprElapsedMs = now && cprStartTime ? Math.max(0, now - cprStartTime) : 0;
 
+            // NEU: Timer für die aktuelle Pause
+            let currentPauseElapsedMs = 0;
+            if (onboardingStep === 3 && !currentSessionRef.current && sessions.length > 0) {
+                // Berechnet die Zeit seit dem Ende der letzten aktiven Kompressions-Session
+                currentPauseElapsedMs = Math.max(0, now - sessions[sessions.length - 1].end);
+            }
+
             let currentCcfCpr = 0; // CCF ab CPR Start (Hauptanzeige im Button)
             let currentCcfScenario = 0; 
             let totalActiveMs = 0;
@@ -716,9 +723,10 @@
                                     >
                                         {!currentSessionRef.current ? (
                                             <>
-                                                <span className="text-4xl font-normal mb-3 tracking-wide uppercase">CPR Pause</span>
-                                                <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcfCpr}% CCF</span>
-                                                <span className="absolute bottom-12 text-[10px] font-light tracking-widest uppercase opacity-70">
+                                                <span className="text-3xl font-bold uppercase mb-1">CPR Pause</span>
+                                                <span className="text-6xl font-light tabular-nums tracking-tighter mb-2">{formatTime(currentPauseElapsedMs)}</span>
+                                                <span className="text-xl font-light opacity-90 tabular-nums">{currentCcfCpr}% CCF</span>
+                                                <span className="absolute bottom-10 text-[10px] font-light tracking-widest uppercase opacity-70">
                                                     Weiter hier drücken
                                                 </span>
                                             </>
