@@ -33,8 +33,9 @@
         const { useState, useEffect, useRef } = React;
 
         const BPM = 110;
-        const MS_PER_COMPRESSION = 60000 / BPM;
+        const MS_PER_COMPRESSION = 60000 / BPM; // ~545.45 ms
 
+        // 2000ms = 2 Sekunden Pause für exakt 2 Beatmungshübe (jeweils 1 Sekunde)
         const CPR_MODES = {
             '15:2': { compressions: 15, ventTime: 2000 },
             '30:2': { compressions: 30, ventTime: 2000 },
@@ -42,7 +43,7 @@
         };
 
         const formatTime = (ms) => {
-            if (ms < 0) return "00:00";
+            if (!ms || ms < 0) return "00:00";
             const totalSeconds = Math.floor(ms / 1000);
             const m = Math.floor(totalSeconds / 60);
             const s = totalSeconds % 60;
@@ -58,7 +59,7 @@
         const App = () => {
             const [onboardingStep, setOnboardingStep] = useState(0); 
             const [isFinished, setIsFinished] = useState(false);  
-            const [now, setNow] = useState(null);
+            const [now, setNow] = useState(() => Date.now());
             
             const [scenarioStartTime, setScenarioStartTime] = useState(null);
             const [blsCheckStartTime, setBlsCheckStartTime] = useState(null);
@@ -73,32 +74,47 @@
             const [effectiveVents, setEffectiveVents] = useState(0);     
             
             const [protocolData, setProtocolData] = useState(null);
+            const [confirmEnd, setConfirmEnd] = useState(false);
 
             const audioCtxRef = useRef(null);
             const lastPlayedIdRef = useRef(null);
             const currentSessionRef = useRef(currentSession);
             const isSoundOnRef = useRef(isSoundOn);
-            
-            useEffect(() => { setNow(Date.now()); }, []);
 
             useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
             useEffect(() => { isSoundOnRef.current = isSoundOn; }, [isSoundOn]);
 
+            useEffect(() => {
+                return () => {
+                    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+                        audioCtxRef.current.close().catch(() => {});
+                    }
+                };
+            }, []);
+
             const unlockSafariAudio = () => {
                 if (!audioCtxRef.current) {
-                    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtx) audioCtxRef.current = new AudioCtx();
                 }
+                if (!audioCtxRef.current) return;
+
                 if (audioCtxRef.current.state === 'suspended') {
-                    audioCtxRef.current.resume();
+                    audioCtxRef.current.resume().catch(() => {});
                 }
                 try {
-                    const osc = audioCtxRef.current.createOscillator();
-                    const gain = audioCtxRef.current.createGain();
+                    const ctx = audioCtxRef.current;
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
                     gain.gain.value = 0;
                     osc.connect(gain);
-                    gain.connect(audioCtxRef.current.destination);
+                    gain.connect(ctx.destination);
+                    osc.onended = () => {
+                        osc.disconnect();
+                        gain.disconnect();
+                    };
                     osc.start(0);
-                    osc.stop(audioCtxRef.current.currentTime + 0.01);
+                    osc.stop(ctx.currentTime + 0.01);
                 } catch(e) {}
             };
 
@@ -108,41 +124,56 @@
                 
                 if (ctx.state === 'suspended') ctx.resume().catch(() => {});
 
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                const t = ctx.currentTime;
+                try {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    const t = ctx.currentTime;
 
-                if (type === 'compression') {
-                    osc.type = 'sine';
-                    osc.frequency.setValueAtTime(220, t);
-                    gain.gain.setValueAtTime(0, t);
-                    gain.gain.linearRampToValueAtTime(0.6, t + 0.03); 
-                    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.2); 
-                    osc.start(t);
-                    osc.stop(t + 0.2);
-                } else if (type === 'ventilation') {
-                    osc.type = 'sine';
-                    osc.frequency.setValueAtTime(180, t);
-                    gain.gain.setValueAtTime(0, t);
-                    gain.gain.linearRampToValueAtTime(0.5, t + 0.3); 
-                    gain.gain.linearRampToValueAtTime(0.01, t + 0.8);   
-                    osc.start(t);
-                    osc.stop(t + 0.8);
-                }
+                    osc.onended = () => {
+                        osc.disconnect();
+                        gain.disconnect();
+                    };
+
+                    if (type === 'compression') {
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(220, t);
+                        gain.gain.setValueAtTime(0.001, t);
+                        gain.gain.linearRampToValueAtTime(0.6, t + 0.03); 
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2); 
+                        osc.start(t);
+                        osc.stop(t + 0.21);
+                    } else if (type === 'ventilation') {
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(180, t);
+                        gain.gain.setValueAtTime(0.001, t);
+                        gain.gain.linearRampToValueAtTime(0.5, t + 0.3); 
+                        gain.gain.linearRampToValueAtTime(0.001, t + 0.8);   
+                        osc.start(t);
+                        osc.stop(t + 0.81);
+                    }
+                } catch (e) {}
             };
 
             useEffect(() => {
                 let interval;
+                let lastUiUpdate = 0;
+
                 if (!isFinished) {
                     interval = setInterval(() => {
                         const currentTime = Date.now();
-                        setNow(currentTime);
 
+                        // UI-State nur alle 200ms aktualisieren
+                        if (currentTime - lastUiUpdate >= 200) {
+                            setNow(currentTime);
+                            lastUiUpdate = currentTime;
+                        }
+
+                        // Audio-Metronom läuft hochpräzise im 25ms-Takt
                         if (onboardingStep === 3 && isSoundOnRef.current && currentSessionRef.current) {
                             const session = currentSessionRef.current;
-                            const sessionDuration = currentTime - session.start;
+                            const sessionDuration = Math.max(0, currentTime - session.start);
                             let currentBeatId = null;
 
                             if (session.mode === 'continuous') {
@@ -153,7 +184,7 @@
                                     lastPlayedIdRef.current = currentBeatId;
                                 }
                             } else {
-                                const config = CPR_MODES[session.mode];
+                                const config = CPR_MODES[session.mode] || CPR_MODES['30:2'];
                                 const compTime = config.compressions * MS_PER_COMPRESSION;
                                 const cycleTime = compTime + config.ventTime;
 
@@ -168,28 +199,45 @@
                                         lastPlayedIdRef.current = currentBeatId;
                                     }
                                 } else {
-                                    const ventIndex = Math.floor((remainder - compTime) / 1000);
-                                    currentBeatId = `${cycleIndex}-v-${ventIndex}`;
-                                    if (currentBeatId !== lastPlayedIdRef.current) {
-                                        playTone('ventilation');
-                                        lastPlayedIdRef.current = currentBeatId;
+                                    const singleVentDuration = config.ventTime / 2; 
+                                    const ventIndex = Math.floor((remainder - compTime) / singleVentDuration);
+                                    if (ventIndex < 2) {
+                                        currentBeatId = `${cycleIndex}-v-${ventIndex}`;
+                                        if (currentBeatId !== lastPlayedIdRef.current) {
+                                            playTone('ventilation');
+                                            lastPlayedIdRef.current = currentBeatId;
+                                        }
                                     }
                                 }
                             }
                         }
-                    }, 30);
+                    }, 25);
                 }
                 return () => clearInterval(interval);
             }, [onboardingStep, isFinished]);
 
             const handleScenarioStart = () => {
-                setScenarioStartTime(Date.now());
+                const currentTime = Date.now();
+                setScenarioStartTime(currentTime);
+                setNow(currentTime);
                 setOnboardingStep(1);
             };
 
             const handleBlsCheckStart = () => {
-                setBlsCheckStartTime(Date.now());
+                const currentTime = Date.now();
+                setBlsCheckStartTime(currentTime);
+                setNow(currentTime);
                 setOnboardingStep(2);
+            };
+
+            const handleStepBack = () => {
+                if (onboardingStep === 1) {
+                    setScenarioStartTime(null);
+                    setOnboardingStep(0);
+                } else if (onboardingStep === 2) {
+                    setBlsCheckStartTime(null);
+                    setOnboardingStep(1);
+                }
             };
 
             const handleCprStart = () => {
@@ -208,10 +256,12 @@
 
             const togglePause = () => {
                 unlockSafariAudio();
+                setConfirmEnd(false);
                 const currentTime = Date.now();
                 
                 if (currentSessionRef.current) {
-                    setSessions(prev => [...prev, { ...currentSessionRef.current, end: currentTime }]);
+                    const sessionToClose = currentSessionRef.current;
+                    setSessions(prev => [...prev, { ...sessionToClose, end: currentTime }]);
                     setCurrentSession(null);
                     currentSessionRef.current = null; 
                     lastPlayedIdRef.current = null; 
@@ -219,24 +269,30 @@
                     const newSession = { start: currentTime, mode: cprMode };
                     setCurrentSession(newSession);
                     currentSessionRef.current = newSession;
+                    lastPlayedIdRef.current = null;
                 }
+                setNow(currentTime);
             };
 
             const handleModeSwitch = (newMode) => {
+                if (newMode === cprMode) return;
                 setCprMode(newMode);
                 if (currentSessionRef.current) {
                     const currentTime = Date.now();
-                    setSessions(prev => [...prev, { ...currentSessionRef.current, end: currentTime }]);
+                    const sessionToClose = currentSessionRef.current;
+                    setSessions(prev => [...prev, { ...sessionToClose, end: currentTime, isModeSwitch: true }]);
+                    
                     const newSession = { start: currentTime, mode: newMode };
                     setCurrentSession(newSession);
                     currentSessionRef.current = newSession;
                     lastPlayedIdRef.current = null; 
+                    setNow(currentTime);
                 }
             };
 
             const toggleSound = () => {
                 unlockSafariAudio();
-                setIsSoundOn(!isSoundOn);
+                setIsSoundOn(prev => !prev);
             };
 
             const handleIneffectiveVent = (e) => {
@@ -251,10 +307,11 @@
 
             // --- BERECHNUNGEN ---
             const calculateSessionActiveTime = (session, endTime) => {
+                if (!session || typeof session.start !== 'number') return 0;
                 const duration = Math.max(0, endTime - session.start);
                 if (session.mode === 'continuous') return duration;
                 
-                const config = CPR_MODES[session.mode];
+                const config = CPR_MODES[session.mode] || CPR_MODES['30:2'];
                 const compTime = config.compressions * MS_PER_COMPRESSION;
                 const cycleTime = compTime + config.ventTime;
 
@@ -263,7 +320,6 @@
                 return (fullCycles * compTime) + Math.min(remainder, compTime);
             };
 
-            // Dynamische Zeitberechnungen
             const scenarioElapsedMs = now && scenarioStartTime ? Math.max(0, now - scenarioStartTime) : 0;
             const blsElapsedMs = now && blsCheckStartTime ? Math.max(0, now - blsCheckStartTime) : 0;
             const cprElapsedMs = now && cprStartTime ? Math.max(0, now - cprStartTime) : 0;
@@ -280,15 +336,14 @@
                 if (currentSession) {
                     activeMsTemp += calculateSessionActiveTime(currentSession, now);
                     if (currentSession.mode !== 'continuous') {
-                        const config = CPR_MODES[currentSession.mode];
+                        const config = CPR_MODES[currentSession.mode] || CPR_MODES['30:2'];
                         const compTime = config.compressions * MS_PER_COMPRESSION;
                         const cycleTime = compTime + config.ventTime;
-                        if ((now - currentSession.start) % cycleTime >= compTime) {
+                        if (Math.max(0, now - currentSession.start) % cycleTime >= compTime) {
                             isAutoVentilationPause = true;
                         }
                     }
                 } else {
-                    // Der Pausen-Timer: Berechnet die Zeit seit der letzten Session
                     if (sessions.length > 0) {
                         const lastSessionEnd = sessions[sessions.length - 1]?.end;
                         if (lastSessionEnd) {
@@ -306,12 +361,12 @@
             const endScenario = () => {
                 const endTime = Date.now();
                 let finalSessions = [...sessions];
-                let finalActiveMs = totalActiveMs;
                 
                 if (currentSessionRef.current) {
                     finalSessions.push({ ...currentSessionRef.current, end: endTime });
-                    finalActiveMs = finalSessions.reduce((acc, s) => acc + calculateSessionActiveTime(s, s.end), 0);
                 }
+                
+                const finalActiveMs = finalSessions.reduce((acc, s) => acc + calculateSessionActiveTime(s, s.end), 0);
                 
                 const finalScenarioMs = scenarioStartTime ? Math.max(0, endTime - scenarioStartTime) : 0;
                 const finalBlsMs = blsCheckStartTime ? Math.max(0, endTime - blsCheckStartTime) : 0;
@@ -325,8 +380,41 @@
                 const timeToBlsMs = (scenarioStartTime && blsCheckStartTime) ? Math.max(0, blsCheckStartTime - scenarioStartTime) : 0;
                 const timeToCompMs = (scenarioStartTime && cprStartTime) ? Math.max(0, cprStartTime - scenarioStartTime) : 0;
 
+                const pauseList = [];
+                for (let i = 0; i < finalSessions.length - 1; i++) {
+                    if (!finalSessions[i].isModeSwitch) {
+                        const pauseStart = finalSessions[i].end;
+                        const pauseEnd = finalSessions[i + 1].start;
+                        const durationMs = Math.max(0, pauseEnd - pauseStart);
+                        if (durationMs >= 500) {
+                            pauseList.push({
+                                index: pauseList.length + 1,
+                                startClock: formatClockTime(pauseStart),
+                                durationSec: (durationMs / 1000).toFixed(1),
+                                durationMs
+                            });
+                        }
+                    }
+                }
+                if (!currentSessionRef.current && finalSessions.length > 0) {
+                    const lastEnd = finalSessions[finalSessions.length - 1].end;
+                    const durationMs = Math.max(0, endTime - lastEnd);
+                    if (durationMs >= 500) {
+                        pauseList.push({
+                            index: pauseList.length + 1,
+                            startClock: formatClockTime(lastEnd),
+                            durationSec: (durationMs / 1000).toFixed(1),
+                            durationMs
+                        });
+                    }
+                }
+                const longestPauseSec = pauseList.length > 0 
+                    ? (Math.max(...pauseList.map(p => p.durationMs)) / 1000).toFixed(1) 
+                    : "0.0";
+                const pausesOver10s = pauseList.filter(p => p.durationMs > 10000).length;
+
                 setProtocolData({
-                    startDate: new Date(scenarioStartTime || Date.now()).toLocaleDateString('de-DE'),
+                    startDate: new Date(scenarioStartTime || endTime).toLocaleDateString('de-DE'),
                     scenarioStartTimeString: formatClockTime(scenarioStartTime),
                     blsStartTimeString: formatClockTime(blsCheckStartTime),
                     cprStartTimeString: formatClockTime(cprStartTime),
@@ -345,14 +433,20 @@
                     handsOnTime: formatTime(finalActiveMs),
                     handsOffTime: formatTime(handsOffCprMs),
                     
+                    pauseList,
+                    longestPauseSec,
+                    pausesOver10s,
+                    
                     ineffectiveVents: ineffectiveVents,
                     effectiveVents: effectiveVents,
                     totalVents: ineffectiveVents + effectiveVents
                 });
 
+                setSessions(finalSessions);
                 setCurrentSession(null);
                 currentSessionRef.current = null;
                 setIsSoundOn(false); 
+                setConfirmEnd(false);
                 setIsFinished(true); 
             };
 
@@ -371,14 +465,13 @@
                 setProtocolData(null);
                 setIneffectiveVents(0);
                 setEffectiveVents(0);
+                setConfirmEnd(false);
                 lastPlayedIdRef.current = null;
             };
 
             const handlePrint = () => {
                 window.print();
             };
-
-            const isActive = currentSession !== null;
 
             // --- RENDER PROTOKOLL SCREEN ---
             if (isFinished && protocolData) {
@@ -455,7 +548,7 @@
                                         <p className={`text-5xl font-light tabular-nums ${protocolData.ccfCpr >= 80 ? 'text-green-600' : 'text-amber-500'}`}>
                                             {protocolData.ccfCpr}<span className="text-2xl">%</span>
                                         </p>
-                                        <p className="text-[10px] text-gray-500 mt-2">Klinisch relevanter Hauptwert</p>
+                                        <p className="text-[10px] text-gray-500 mt-2">Klinisch relevanter Hauptwert (Ziel &gt; 80%)</p>
                                     </div>
                                     <div className="bg-gray-50 rounded-xl p-4 md:col-span-2">
                                         <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-2">CCF (ab Szenario Start)</p>
@@ -479,6 +572,33 @@
                                         <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-wide">Pausen & Beatmungen</p>
                                     </div>
                                 </div>
+                            </div>
+
+                            <div className="mt-8 pt-8 border-t border-gray-100">
+                                <h2 className="text-sm font-medium text-gray-900 tracking-widest uppercase mb-6">Pausen-Analyse (Manuelle Hands-Off-Zeiten)</h2>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-4">
+                                    <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
+                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-1">Anzahl Pausen</p>
+                                        <p className="text-2xl font-light tabular-nums text-gray-800">{protocolData.pauseList.length}</p>
+                                    </div>
+                                    <div className={`border rounded-xl p-4 ${Number(protocolData.longestPauseSec) > 10 ? 'bg-red-50/50 border-red-100' : 'bg-green-50/50 border-green-100'}`}>
+                                        <p className={`text-[10px] tracking-widest uppercase mb-1 ${Number(protocolData.longestPauseSec) > 10 ? 'text-red-600' : 'text-green-700'}`}>Längste Pause</p>
+                                        <p className={`text-2xl font-light tabular-nums ${Number(protocolData.longestPauseSec) > 10 ? 'text-red-600' : 'text-green-700'}`}>{protocolData.longestPauseSec} <span className="text-sm">sek</span></p>
+                                    </div>
+                                    <div className={`border rounded-xl p-4 ${protocolData.pausesOver10s > 0 ? 'bg-red-50/50 border-red-100' : 'bg-gray-50 border-gray-100'}`}>
+                                        <p className="text-[10px] text-gray-500 tracking-widest uppercase mb-1">Pausen &gt; 10 Sek.</p>
+                                        <p className={`text-2xl font-light tabular-nums ${protocolData.pausesOver10s > 0 ? 'text-red-600 font-normal' : 'text-gray-800'}`}>{protocolData.pausesOver10s}</p>
+                                    </div>
+                                </div>
+                                {protocolData.pauseList.length > 0 && (
+                                    <div className="flex flex-wrap gap-2 mt-3">
+                                        {protocolData.pauseList.map(p => (
+                                            <span key={p.index} className={`text-xs px-3 py-1.5 rounded-lg border tabular-nums ${p.durationMs > 10000 ? 'bg-red-50 border-red-200 text-red-700' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
+                                                #{p.index} ({p.startClock}): <strong>{p.durationSec}s</strong>
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
 
                             <div className="mt-8 pt-8 border-t border-gray-100">
@@ -524,13 +644,14 @@
                         {`
                         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap');
                         body { font-family: 'Inter', sans-serif; }
+                        button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
                         
                         @keyframes pulse-110-bpm {
                             0% { transform: scale(0.995); box-shadow: 0 0 0 0 rgba(220, 252, 231, 0.5); background-color: #dcfce7; }
                             50% { transform: scale(1.015); box-shadow: 0 0 0 35px rgba(220, 252, 231, 0); background-color: #bbf7d0; }
                             100% { transform: scale(0.995); box-shadow: 0 0 0 0 rgba(220, 252, 231, 0); background-color: #dcfce7; }
                         }
-                        .animate-cpr-beat { animation: pulse-110-bpm 545ms infinite ease-in-out; }
+                        .animate-cpr-beat { animation: pulse-110-bpm 545.45ms infinite ease-in-out; }
 
                         @keyframes breathe-blue {
                             0% { transform: scale(0.96); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); background-color: #3b82f6; }
@@ -573,7 +694,6 @@
                         {onboardingStep < 3 ? (
                             <div className="flex flex-col items-center animate-fade-in text-center w-full max-w-md mt-6">
                                 
-                                {/* Modus-Auswahl bleibt immer sichtbar */}
                                 <div className="flex bg-gray-50 rounded-full p-1 mb-8 border border-gray-100 w-full justify-between">
                                     <button onClick={() => handleModeSwitch('15:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '15:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>15:2</button>
                                     <button onClick={() => handleModeSwitch('30:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '30:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>30:2</button>
@@ -616,6 +736,9 @@
                                             <p className="text-3xl font-light text-red-400 tabular-nums mt-1">
                                                 {formatTime(scenarioElapsedMs)}
                                             </p>
+                                            <button onClick={handleStepBack} className="mt-6 text-xs text-gray-400 hover:text-gray-600 uppercase tracking-widest underline underline-offset-4">
+                                                ← Schritt zurück
+                                            </button>
                                         </div>
                                     </>
                                 )}
@@ -643,6 +766,9 @@
                                                     <p className="text-2xl font-light text-gray-500 tabular-nums mt-1">{formatTime(blsElapsedMs)}</p>
                                                 </div>
                                             </div>
+                                            <button onClick={handleStepBack} className="mt-6 text-xs text-gray-400 hover:text-gray-600 uppercase tracking-widest underline underline-offset-4">
+                                                ← Schritt zurück
+                                            </button>
                                         </div>
                                     </>
                                 )}
@@ -682,8 +808,9 @@
                                     </button>
 
                                     <button 
+                                        key={!currentSession ? 'paused' : isAutoVentilationPause ? 'vent' : 'comp'}
                                         onClick={togglePause}
-                                        className={`w-72 h-72 sm:w-80 sm:h-80 rounded-full flex flex-col items-center justify-center transition-all duration-300 ease-in-out outline-none select-none relative z-10
+                                        className={`w-72 h-72 sm:w-80 sm:h-80 rounded-full flex flex-col items-center justify-center transition-colors duration-300 ease-in-out outline-none select-none relative z-10
                                             ${!currentSession 
                                                 ? 'bg-red-500 text-white scale-100 shadow-[0_10px_40px_rgba(239,68,68,0.4)]'
                                                 : isAutoVentilationPause
@@ -703,7 +830,7 @@
                                             </>
                                         ) : isAutoVentilationPause ? (
                                             <>
-                                                <span className="text-4xl font-normal mb-3 tracking-wide uppercase">Beatmung</span>
+                                                <span className="text-4xl font-normal mb-3 tracking-wide uppercase">2x Beatmung</span>
                                                 <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcfCpr}% CCF</span>
                                             </>
                                         ) : (
@@ -728,12 +855,29 @@
                                 </div>
                                 
                                 <div className="mt-8 flex flex-col items-center">
-                                    <button 
-                                        onClick={endScenario}
-                                        className="mt-4 px-6 py-3 rounded-full bg-gray-50 border border-gray-100 text-[10px] text-gray-500 hover:bg-red-50 hover:text-red-500 hover:border-red-100 transition-all uppercase tracking-[0.2em] font-medium"
-                                    >
-                                        Einsatz beenden & Protokoll
-                                    </button>
+                                    {!confirmEnd ? (
+                                        <button 
+                                            onClick={() => setConfirmEnd(true)}
+                                            className="mt-4 px-6 py-3 rounded-full bg-gray-50 border border-gray-100 text-[10px] text-gray-500 hover:bg-red-50 hover:text-red-500 hover:border-red-100 transition-all uppercase tracking-[0.2em] font-medium"
+                                        >
+                                            Einsatz beenden & Protokoll
+                                        </button>
+                                    ) : (
+                                        <div className="mt-4 flex items-center gap-3">
+                                            <button 
+                                                onClick={endScenario}
+                                                className="px-5 py-3 rounded-full bg-red-600 text-white text-[10px] uppercase tracking-[0.15em] font-semibold shadow-sm hover:bg-red-700 transition-all"
+                                            >
+                                                Wirklich beenden
+                                            </button>
+                                            <button 
+                                                onClick={() => setConfirmEnd(false)}
+                                                className="px-5 py-3 rounded-full bg-gray-100 text-gray-600 text-[10px] uppercase tracking-[0.15em] font-medium hover:bg-gray-200 transition-all"
+                                            >
+                                                Abbrechen
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
