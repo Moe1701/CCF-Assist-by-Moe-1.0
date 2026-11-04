@@ -639,7 +639,7 @@
 
             // --- RENDER MAIN APP ---
             return (
-                <div className="min-h-screen bg-white text-gray-800 flex flex-col font-sans overflow-hidden w-full">
+                <div className="h-[100dvh] bg-white text-gray-800 flex flex-col font-sans overflow-hidden w-full">
                     <style>
                         {`
                         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap');
@@ -647,24 +647,24 @@
                         button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
                         
                         @keyframes pulse-110-bpm {
-                            0% { transform: scale(0.995); box-shadow: 0 0 0 0 rgba(220, 252, 231, 0.5); background-color: #dcfce7; }
-                            50% { transform: scale(1.015); box-shadow: 0 0 0 35px rgba(220, 252, 231, 0); background-color: #bbf7d0; }
-                            100% { transform: scale(0.995); box-shadow: 0 0 0 0 rgba(220, 252, 231, 0); background-color: #dcfce7; }
+                            0% { transform: scale(0.99); box-shadow: 0 0 0 0 rgba(220, 252, 231, 0.55); background-color: #dcfce7; }
+                            50% { transform: scale(1.02); box-shadow: 0 0 0 25px rgba(220, 252, 231, 0); background-color: #bbf7d0; }
+                            100% { transform: scale(0.99); box-shadow: 0 0 0 0 rgba(220, 252, 231, 0); background-color: #dcfce7; }
                         }
                         .animate-cpr-beat { animation: pulse-110-bpm 545.45ms infinite ease-in-out; }
 
                         @keyframes breathe-blue {
-                            0% { transform: scale(0.96); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); background-color: #3b82f6; }
-                            50% { transform: scale(1.04); box-shadow: 0 0 0 40px rgba(59, 130, 246, 0); background-color: #60a5fa; }
-                            100% { transform: scale(0.96); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); background-color: #3b82f6; }
+                            0% { transform: scale(0.97); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); background-color: #3b82f6; }
+                            50% { transform: scale(1.03); box-shadow: 0 0 0 30px rgba(59, 130, 246, 0); background-color: #60a5fa; }
+                            100% { transform: scale(0.97); box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); background-color: #3b82f6; }
                         }
                         .animate-breathe { animation: breathe-blue 1000ms infinite ease-in-out; }
                         `}
                     </style>
 
-                    <header className="w-full flex justify-between items-center px-6 py-4 border-b border-gray-50 no-print">
+                    <header className="w-full shrink-0 flex justify-between items-center px-5 py-3 border-b border-gray-100 no-print">
                         <div className="flex items-center gap-3">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 60" className="h-10 sm:h-12 w-auto">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 60" className="h-9 sm:h-10 w-auto">
                                 <path d="M40 52C40 52 10 32 10 15c0-12 18-12 30 0 12-12 30-12 30 0 0 17-30 37-30 37z" fill="#dc2626"/>
                                 <path d="M0 32h15l6-15 10 32 8-22 8 10h18" stroke="#fca5a5" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
                                 <text x="85" y="32" fontFamily="Inter, sans-serif" fontWeight="700" fontSize="24" fill="#1f2937">CCF Assist</text>
@@ -688,16 +688,16 @@
                         )}
                     </header>
 
-                    <main className="flex-grow flex flex-col items-center justify-center relative w-full pb-12 px-4">
+                    <main className="flex-1 flex flex-col items-center justify-between w-full max-w-md mx-auto px-5 py-4 overflow-hidden">
                         
                         {/* --- MULTI-STEP ONBOARDING --- */}
                         {onboardingStep < 3 ? (
-                            <div className="flex flex-col items-center animate-fade-in text-center w-full max-w-md mt-6">
+                            <div className="flex flex-col items-center justify-center flex-1 text-center w-full">
                                 
                                 <div className="flex bg-gray-50 rounded-full p-1 mb-8 border border-gray-100 w-full justify-between">
-                                    <button onClick={() => handleModeSwitch('15:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '15:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>15:2</button>
-                                    <button onClick={() => handleModeSwitch('30:2')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === '30:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>30:2</button>
-                                    <button onClick={() => handleModeSwitch('continuous')} className={`flex-1 py-3 rounded-full text-sm sm:text-base font-semibold tracking-wide transition-all duration-300 ${cprMode === 'continuous' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>Kontinuierlich</button>
+                                    <button onClick={() => handleModeSwitch('15:2')} className={`flex-1 py-2.5 rounded-full text-sm font-semibold tracking-wide transition-all duration-300 ${cprMode === '15:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>15:2</button>
+                                    <button onClick={() => handleModeSwitch('30:2')} className={`flex-1 py-2.5 rounded-full text-sm font-semibold tracking-wide transition-all duration-300 ${cprMode === '30:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>30:2</button>
+                                    <button onClick={() => handleModeSwitch('continuous')} className={`flex-1 py-2.5 rounded-full text-sm font-semibold tracking-wide transition-all duration-300 ${cprMode === 'continuous' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400 hover:text-gray-600'}`}>Kontinuierlich</button>
                                 </div>
 
                                 {/* STEP 0: Szenario Start */}
@@ -705,15 +705,13 @@
                                     <>
                                         <button 
                                             onClick={handleScenarioStart}
-                                            className="px-10 py-6 sm:px-14 sm:py-8 bg-white border border-red-200 text-red-500 rounded-full text-3xl sm:text-4xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] hover:shadow-[0_4px_25px_rgba(239,68,68,0.15)] hover:border-red-300 hover:text-red-600 transition-all duration-300 tracking-widest outline-none active:scale-95 w-full max-w-[320px]"
+                                            className="px-10 py-6 bg-white border border-red-200 text-red-500 rounded-full text-3xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] active:scale-95 transition-all duration-300 tracking-widest outline-none w-full max-w-[300px]"
                                         >
                                             Szenario Start
                                         </button>
-                                        <div className="mt-8 flex flex-col items-center">
-                                            <p className="text-gray-500 font-light text-base sm:text-lg max-w-sm leading-relaxed mb-6">
-                                                Tippe auf den Button, sobald das Szenario (Einsatzbeginn) startet.
-                                            </p>
-                                        </div>
+                                        <p className="mt-6 text-gray-500 font-light text-base max-w-xs leading-relaxed">
+                                            Tippe auf den Button, sobald das Szenario (Einsatzbeginn) startet.
+                                        </p>
                                     </>
                                 )}
 
@@ -722,21 +720,21 @@
                                     <>
                                         <button 
                                             onClick={handleBlsCheckStart}
-                                            className="px-8 py-6 sm:px-10 sm:py-8 bg-white border border-red-200 text-red-500 rounded-full text-2xl sm:text-3xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] hover:shadow-[0_4px_25px_rgba(239,68,68,0.15)] hover:border-red-300 hover:text-red-600 transition-all duration-300 tracking-widest outline-none active:scale-95 w-full max-w-[350px]"
+                                            className="px-8 py-6 bg-white border border-red-200 text-red-500 rounded-full text-2xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] active:scale-95 transition-all duration-300 tracking-widest outline-none w-full max-w-[330px]"
                                         >
                                             BLS Check gestartet
                                         </button>
-                                        <div className="mt-8 flex flex-col items-center">
-                                            <p className="text-gray-500 font-light text-base sm:text-lg max-w-sm leading-relaxed mb-6">
+                                        <div className="mt-6 flex flex-col items-center">
+                                            <p className="text-gray-500 font-light text-sm max-w-xs leading-relaxed mb-4">
                                                 Tippe hier, sobald die Patientenbeurteilung (BLS Check) beginnt.
                                             </p>
-                                            <p className="text-gray-400 font-medium text-xs sm:text-sm uppercase tracking-widest">
+                                            <p className="text-gray-400 font-medium text-xs uppercase tracking-widest">
                                                 Szenario-Zeit läuft
                                             </p>
                                             <p className="text-3xl font-light text-red-400 tabular-nums mt-1">
                                                 {formatTime(scenarioElapsedMs)}
                                             </p>
-                                            <button onClick={handleStepBack} className="mt-6 text-xs text-gray-400 hover:text-gray-600 uppercase tracking-widest underline underline-offset-4">
+                                            <button onClick={handleStepBack} className="mt-5 text-xs text-gray-400 hover:text-gray-600 uppercase tracking-widest underline underline-offset-4">
                                                 ← Schritt zurück
                                             </button>
                                         </div>
@@ -748,12 +746,12 @@
                                     <>
                                         <button 
                                             onClick={handleCprStart}
-                                            className="px-6 py-6 sm:px-8 sm:py-8 bg-white border border-red-200 text-red-500 rounded-full text-xl sm:text-2xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] hover:shadow-[0_4px_25px_rgba(239,68,68,0.15)] hover:border-red-300 hover:text-red-600 transition-all duration-300 tracking-widest outline-none active:scale-95 w-full max-w-[380px]"
+                                            className="px-6 py-6 bg-white border border-red-200 text-red-500 rounded-full text-xl font-light shadow-[0_4px_20px_rgba(239,68,68,0.08)] active:scale-95 transition-all duration-300 tracking-widest outline-none w-full max-w-[350px]"
                                         >
                                             Thoraxkompressionen gestartet
                                         </button>
-                                        <div className="mt-8 flex flex-col items-center">
-                                            <p className="text-gray-500 font-light text-base sm:text-lg max-w-sm leading-relaxed mb-6">
+                                        <div className="mt-6 flex flex-col items-center">
+                                            <p className="text-gray-500 font-light text-sm max-w-xs leading-relaxed mb-4">
                                                 Tippe hier bei der ersten Thoraxkompression, um das Metronom zu starten.
                                             </p>
                                             <div className="flex gap-8">
@@ -766,7 +764,7 @@
                                                     <p className="text-2xl font-light text-gray-500 tabular-nums mt-1">{formatTime(blsElapsedMs)}</p>
                                                 </div>
                                             </div>
-                                            <button onClick={handleStepBack} className="mt-6 text-xs text-gray-400 hover:text-gray-600 uppercase tracking-widest underline underline-offset-4">
+                                            <button onClick={handleStepBack} className="mt-5 text-xs text-gray-400 hover:text-gray-600 uppercase tracking-widest underline underline-offset-4">
                                                 ← Schritt zurück
                                             </button>
                                         </div>
@@ -776,43 +774,50 @@
 
                         ) : (
                             // --- ACTIVE / PAUSED SCREEN (STEP 3) ---
-                            <div className="flex flex-col items-center w-full max-w-md pt-6">
+                            <div className="flex flex-col items-center justify-between w-full h-full">
                                 
-                                <div className="absolute top-6 left-6 flex flex-col items-start">
-                                    <span className="text-[9px] text-gray-400 tracking-widest uppercase font-medium">Einsatz-Gesamtzeit</span>
-                                    <span className="text-base font-light text-gray-500 tabular-nums mt-0.5">{formatTime(scenarioElapsedMs)}</span>
+                                {/* TOP SECTION: Modus-Wahl & Zeiten */}
+                                <div className="w-full flex flex-col items-center shrink-0">
+                                    <div className="flex bg-gray-50 rounded-full p-1 mb-4 border border-gray-100 w-full justify-between">
+                                        <button onClick={() => handleModeSwitch('15:2')} className={`flex-1 py-2 rounded-full text-xs font-semibold tracking-wider transition-all duration-300 uppercase ${cprMode === '15:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400'}`}>15:2</button>
+                                        <button onClick={() => handleModeSwitch('30:2')} className={`flex-1 py-2 rounded-full text-xs font-semibold tracking-wider transition-all duration-300 uppercase ${cprMode === '30:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400'}`}>30:2</button>
+                                        <button onClick={() => handleModeSwitch('continuous')} className={`flex-1 py-2 rounded-full text-xs font-semibold tracking-wider transition-all duration-300 uppercase ${cprMode === 'continuous' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400'}`}>Kontin.</button>
+                                    </div>
+
+                                    {/* ZEITEN-DASHBOARD: Beide Zeiten klar & groß */}
+                                    <div className="w-full grid grid-cols-2 gap-3 bg-gray-50/70 border border-gray-100 rounded-2xl py-3 px-4">
+                                        <div className="flex flex-col items-center border-r border-gray-200/70 pr-2">
+                                            <span className="text-[10px] text-gray-400 tracking-[0.15em] uppercase font-semibold mb-0.5">Einsatz-Zeit</span>
+                                            <span className="text-3xl sm:text-4xl font-light text-gray-600 tabular-nums tracking-tight">
+                                                {formatTime(scenarioElapsedMs)}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-col items-center pl-2">
+                                            <span className="text-[10px] text-red-500 tracking-[0.15em] uppercase font-semibold mb-0.5">CPR-Dauer</span>
+                                            <span className="text-3xl sm:text-4xl font-normal text-gray-900 tabular-nums tracking-tight">
+                                                {formatTime(cprElapsedMs)}
+                                            </span>
+                                        </div>
+                                    </div>
                                 </div>
 
-                                <div className="flex bg-gray-50 rounded-full p-1 mb-8 border border-gray-100 w-full justify-between mt-12 sm:mt-8">
-                                    <button onClick={() => handleModeSwitch('15:2')} className={`flex-1 py-2 rounded-full text-[10px] sm:text-xs font-medium tracking-wider transition-all duration-300 uppercase ${cprMode === '15:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400'}`}>15:2</button>
-                                    <button onClick={() => handleModeSwitch('30:2')} className={`flex-1 py-2 rounded-full text-[10px] sm:text-xs font-medium tracking-wider transition-all duration-300 uppercase ${cprMode === '30:2' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400'}`}>30:2</button>
-                                    <button onClick={() => handleModeSwitch('continuous')} className={`flex-1 py-2 rounded-full text-[10px] sm:text-xs font-medium tracking-wider transition-all duration-300 uppercase ${cprMode === 'continuous' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] text-red-500' : 'text-gray-400'}`}>Kontin.</button>
-                                </div>
-
-                                <div className="text-center mb-8">
-                                    <p className="text-red-500 text-[10px] tracking-[0.2em] uppercase mb-2 font-medium">Gesamtzeit CPR</p>
-                                    <p className="text-6xl font-light text-gray-800 tracking-tight tabular-nums">
-                                        {formatTime(cprElapsedMs)}
-                                    </p>
-                                </div>
-
-                                {/* CONTAINER FÜR HAUPTBUTTON & RUNDE SATELLITEN */}
-                                <div className="relative flex justify-center items-center mt-4 mb-10 w-full">
+                                {/* CENTER SECTION: Kompaktere Hauptkugel + Satelliten-Buttons */}
+                                <div className="relative flex justify-center items-center w-full my-auto py-4">
                                     
                                     <button
                                         onClick={handleIneffectiveVent}
-                                        className="absolute bottom-0 left-0 -translate-x-1 sm:-translate-x-4 translate-y-4 sm:translate-y-6 bg-white/95 backdrop-blur border border-orange-100 shadow-[0_8px_30px_rgba(0,0,0,0.08)] rounded-full w-24 h-24 sm:w-28 sm:h-28 flex flex-col items-center justify-center z-20 hover:bg-orange-50 active:scale-95 transition-all outline-none"
+                                        className="absolute bottom-1 left-1 sm:left-2 bg-white/95 backdrop-blur border border-orange-200 shadow-[0_6px_20px_rgba(0,0,0,0.07)] rounded-full w-20 h-20 sm:w-24 sm:h-24 flex flex-col items-center justify-center z-20 active:scale-95 transition-all outline-none"
                                     >
-                                        <span className="text-[8px] sm:text-[9px] text-orange-500 uppercase tracking-widest font-semibold mb-1 text-center leading-tight">Beatmungs-<br/>versuch</span>
-                                        <span className="text-2xl sm:text-3xl font-light text-gray-800 leading-none">{ineffectiveVents}</span>
+                                        <span className="text-[8px] text-orange-500 uppercase tracking-wider font-semibold mb-0.5 text-center leading-tight">Beatmungs-<br/>versuch</span>
+                                        <span className="text-2xl font-normal text-gray-800 leading-none tabular-nums">{ineffectiveVents}</span>
                                     </button>
 
                                     <button 
                                         key={!currentSession ? 'paused' : isAutoVentilationPause ? 'vent' : 'comp'}
                                         onClick={togglePause}
-                                        className={`w-72 h-72 sm:w-80 sm:h-80 rounded-full flex flex-col items-center justify-center transition-colors duration-300 ease-in-out outline-none select-none relative z-10
+                                        className={`w-56 h-56 sm:w-64 sm:h-64 rounded-full flex flex-col items-center justify-center transition-colors duration-300 ease-in-out outline-none select-none relative z-10
                                             ${!currentSession 
-                                                ? 'bg-red-500 text-white scale-100 shadow-[0_10px_40px_rgba(239,68,68,0.4)]'
+                                                ? 'bg-red-500 text-white scale-100 shadow-[0_10px_35px_rgba(239,68,68,0.35)]'
                                                 : isAutoVentilationPause
                                                     ? 'animate-breathe text-white'
                                                     : 'animate-cpr-beat text-green-900' 
@@ -821,24 +826,24 @@
                                     >
                                         {!currentSession ? (
                                             <>
-                                                <span className="text-3xl font-bold uppercase mb-1">CPR Pause</span>
-                                                <span className="text-6xl font-light tabular-nums tracking-tighter mb-2">{formatTime(currentPauseElapsedMs)}</span>
-                                                <span className="text-xl font-light opacity-90 tabular-nums">{currentCcfCpr}% CCF</span>
-                                                <span className="absolute bottom-10 text-[10px] font-light tracking-widest uppercase opacity-70">
-                                                    Weiter hier drücken
+                                                <span className="text-xl font-bold uppercase tracking-wide mb-0.5">CPR Pause</span>
+                                                <span className="text-5xl font-light tabular-nums tracking-tighter mb-1">{formatTime(currentPauseElapsedMs)}</span>
+                                                <span className="text-base font-light opacity-90 tabular-nums">{currentCcfCpr}% CCF</span>
+                                                <span className="absolute bottom-7 text-[9px] font-medium tracking-widest uppercase opacity-75">
+                                                    Weiter drücken
                                                 </span>
                                             </>
                                         ) : isAutoVentilationPause ? (
                                             <>
-                                                <span className="text-4xl font-normal mb-3 tracking-wide uppercase">2x Beatmung</span>
-                                                <span className="text-2xl font-light opacity-90 tabular-nums">{currentCcfCpr}% CCF</span>
+                                                <span className="text-2xl font-medium mb-2 tracking-wide uppercase">2x Beatmung</span>
+                                                <span className="text-xl font-light opacity-90 tabular-nums">{currentCcfCpr}% CCF</span>
                                             </>
                                         ) : (
                                             <>
-                                                <span className="text-8xl font-light tracking-tighter tabular-nums">{currentCcfCpr}<span className="text-5xl">%</span></span>
-                                                <span className="text-xl font-light mt-1 opacity-90 tracking-widest uppercase">CCF</span>
-                                                <span className="absolute bottom-14 text-[10px] font-light tracking-widest uppercase opacity-60">
-                                                    Bei CPR Pause hier drücken
+                                                <span className="text-6xl sm:text-7xl font-light tracking-tighter tabular-nums leading-none">{currentCcfCpr}<span className="text-3xl sm:text-4xl">%</span></span>
+                                                <span className="text-base font-medium mt-1 opacity-80 tracking-widest uppercase">CCF</span>
+                                                <span className="absolute bottom-9 text-[9px] font-medium tracking-widest uppercase opacity-60">
+                                                    Pause drücken
                                                 </span>
                                             </>
                                         )}
@@ -846,33 +851,34 @@
 
                                     <button
                                         onClick={handleEffectiveVent}
-                                        className="absolute bottom-0 right-0 translate-x-1 sm:translate-x-4 translate-y-4 sm:translate-y-6 bg-white/95 backdrop-blur border border-blue-100 shadow-[0_8px_30px_rgba(0,0,0,0.08)] rounded-full w-24 h-24 sm:w-28 sm:h-28 flex flex-col items-center justify-center z-20 hover:bg-blue-50 active:scale-95 transition-all outline-none"
+                                        className="absolute bottom-1 right-1 sm:right-2 bg-white/95 backdrop-blur border border-blue-200 shadow-[0_6px_20px_rgba(0,0,0,0.07)] rounded-full w-20 h-20 sm:w-24 sm:h-24 flex flex-col items-center justify-center z-20 active:scale-95 transition-all outline-none"
                                     >
-                                        <span className="text-[8px] sm:text-[9px] text-blue-500 uppercase tracking-widest font-semibold mb-1 text-center leading-tight">Effektive<br/>Beatmung</span>
-                                        <span className="text-2xl sm:text-3xl font-light text-gray-800 leading-none">{effectiveVents}</span>
+                                        <span className="text-[8px] text-blue-500 uppercase tracking-wider font-semibold mb-0.5 text-center leading-tight">Effektive<br/>Beatmung</span>
+                                        <span className="text-2xl font-normal text-gray-800 leading-none tabular-nums">{effectiveVents}</span>
                                     </button>
 
                                 </div>
                                 
-                                <div className="mt-8 flex flex-col items-center">
+                                {/* BOTTOM SECTION: Einsatz beenden */}
+                                <div className="w-full flex flex-col items-center shrink-0 pb-1">
                                     {!confirmEnd ? (
                                         <button 
                                             onClick={() => setConfirmEnd(true)}
-                                            className="mt-4 px-6 py-3 rounded-full bg-gray-50 border border-gray-100 text-[10px] text-gray-500 hover:bg-red-50 hover:text-red-500 hover:border-red-100 transition-all uppercase tracking-[0.2em] font-medium"
+                                            className="w-full max-w-xs py-3 rounded-full bg-gray-50 border border-gray-200 text-[11px] text-gray-600 active:bg-red-50 active:text-red-500 transition-all uppercase tracking-[0.18em] font-medium"
                                         >
                                             Einsatz beenden & Protokoll
                                         </button>
                                     ) : (
-                                        <div className="mt-4 flex items-center gap-3">
+                                        <div className="flex items-center gap-3 w-full max-w-xs">
                                             <button 
                                                 onClick={endScenario}
-                                                className="px-5 py-3 rounded-full bg-red-600 text-white text-[10px] uppercase tracking-[0.15em] font-semibold shadow-sm hover:bg-red-700 transition-all"
+                                                className="flex-1 py-3 rounded-full bg-red-600 text-white text-[11px] uppercase tracking-[0.15em] font-semibold shadow-sm active:bg-red-700 transition-all"
                                             >
                                                 Wirklich beenden
                                             </button>
                                             <button 
                                                 onClick={() => setConfirmEnd(false)}
-                                                className="px-5 py-3 rounded-full bg-gray-100 text-gray-600 text-[10px] uppercase tracking-[0.15em] font-medium hover:bg-gray-200 transition-all"
+                                                className="flex-1 py-3 rounded-full bg-gray-100 text-gray-600 text-[11px] uppercase tracking-[0.15em] font-medium active:bg-gray-200 transition-all"
                                             >
                                                 Abbrechen
                                             </button>
